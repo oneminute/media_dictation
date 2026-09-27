@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Media Dictation</title>
+<style>
+:root{
+  --bg:#f5f7fb;
+  --card:#ffffff;
+  --text:#172033;
+  --muted:#667085;
+  --line:#d7dce5;
+  --primary:#2563eb;
+  --ok:#15803d;
+  --bad:#b42318;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:22px}
+h1{font-size:28px;margin:0 0 6px}
+.sub{color:var(--muted);margin-bottom:18px}
+.card{
+  background:var(--card);
+  border:1px solid #e5e7eb;
+  border-radius:16px;
+  padding:18px;
+  margin-bottom:16px;
+  box-shadow:0 5px 18px rgba(0,0,0,.04);
+}
+.url-row{display:flex;gap:10px}
+.url-row input{flex:1}
+input,textarea{
+  width:100%;
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:12px;
+  font-size:16px;
+  color:var(--text);
+  background:#fff;
+}
+textarea{
+  min-height:136px;
+  resize:vertical;
+  line-height:1.55;
+}
+button{
+  border:0;
+  border-radius:10px;
+  padding:11px 14px;
+  font-size:15px;
+  font-weight:650;
+  cursor:pointer;
+  background:#e5e7eb;
+  color:#111827;
+}
+button.primary{background:var(--primary);color:white}
+button.good{background:#dcfce7;color:#166534}
+button.warn{background:#fef3c7;color:#92400e}
+.grid{display:grid;grid-template-columns:1.08fr .92fr;gap:16px}
+@media(max-width:850px){
+  .grid{grid-template-columns:1fr}
+  .url-row{flex-direction:column}
+}
+#player{
+  width:100%;
+  aspect-ratio:16/9;
+  background:#111;
+  border-radius:12px;
+  overflow:hidden;
+}
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.meta{font-size:14px;color:var(--muted)}
+.progress{
+  height:8px;
+  background:#e5e7eb;
+  border-radius:999px;
+  overflow:hidden;
+  margin:10px 0 14px;
+}
+.bar{height:100%;width:0;background:var(--primary)}
+.sentence{
+  min-height:92px;
+  border:1px dashed #cbd5e1;
+  border-radius:12px;
+  padding:14px;
+  font-size:20px;
+  line-height:1.55;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  background:#f8fafc;
+}
+.hidden-text{
+  filter:blur(7px);
+  user-select:none;
+}
+.status{margin-top:10px;font-size:14px;color:var(--muted)}
+.error{color:var(--bad);white-space:pre-wrap}
+.feedback{margin-top:10px;min-height:24px;font-size:15px}
+.ok{color:var(--ok);font-weight:700}
+.bad{color:var(--bad);font-weight:700}
+.badge{
+  display:inline-block;
+  padding:3px 8px;
+  margin-left:6px;
+  border-radius:999px;
+  background:#eef2ff;
+  color:#3730a3;
+  font-size:12px;
+}
+.help{font-size:14px;line-height:1.9;color:#475467}
+.kbd{
+  display:inline-block;
+  padding:1px 6px;
+  border:1px solid #cbd5e1;
+  border-bottom-width:2px;
+  border-radius:5px;
+  background:white;
+  font-size:12px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.answer-label{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin:16px 0 8px;
+  font-weight:650;
+}
+.hint{font-size:13px;color:var(--muted);font-weight:400}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Media Dictation</h1>
+  <div class="sub">粘贴 YouTube 链接，逐句听写。原文默认隐藏。</div>
+
+  <div class="card">
+    <div class="url-row">
+      <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+      <button id="load" class="primary">获取字幕并开始</button>
+    </div>
+    <div id="status" class="status">输入链接后开始。字幕载入后，单按 Ctrl 重播当前句。</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div id="player"></div>
+    </div>
+
+    <div class="card">
+      <div class="meta">
+        <span id="pos">0 / 0</span>
+        ·
+        <span id="range">00:00</span>
+        <span id="lang"></span>
+      </div>
+
+      <div class="progress"><div id="bar" class="bar"></div></div>
+
+      <div id="sentence" class="sentence hidden-text">请先粘贴 YouTube 链接</div>
+
+      <div class="row" style="margin-top:12px">
+        <button id="play" class="primary">▶ 重播当前句</button>
+        <button id="prev">← 上一句</button>
+        <button id="next">下一句 →</button>
+        <button id="show" class="warn">显示/隐藏原文</button>
+      </div>
+
+      <div class="answer-label">
+        <span>你的听写</span>
+        <span class="hint">Enter 检查</span>
+      </div>
+
+      <textarea
+        id="answer"
+        placeholder="输入你听到的英文…"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      ></textarea>
+
+      <div class="row" style="margin-top:10px">
+        <button id="check" class="good">Check</button>
+        <button id="clear">清空</button>
+      </div>
+
+      <div id="feedback" class="feedback"></div>
+    </div>
+  </div>
+
+  <div class="card help">
+    <strong>快捷键：</strong>
+    <span class="kbd">Ctrl</span> 单独按下并松开：重播当前句；
+    <span class="kbd">Enter</span>：检查答案；
+    错误时自动跳到第一个错误单词，全部正确时自动进入并播放下一句；
+    <span class="kbd">Ctrl</span> + <span class="kbd">H</span>：显示/隐藏原文；
+    <span class="kbd">Tab</span> / <span class="kbd">Shift</span> + <span class="kbd">Tab</span>：下一句/上一句。
+  </div>
+</div>
+
+<script>
+let player = null;
+let playerReady = false;
+let items = [];
+let index = 0;
+let reveal = false;
+let videoId = "";
+let stopTimer = null;
+let advanceTimer = null;
+
+let ctrlDown = false;
+let ctrlUsedAsChord = false;
+
+function formatTime(seconds) {
+  seconds = Math.max(0, Math.floor(seconds || 0));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return String(minutes).padStart(2, "0") + ":" + String(rest).padStart(2, "0");
+}
+
+function updateUI() {
+  if (!items.length) {
+    document.getElementById("pos").textContent = "0 / 0";
+    return;
+  }
+
+  const item = items[index];
+  document.getElementById("pos").textContent = String(index + 1) + " / " + String(items.length);
+  document.getElementById("range").textContent =
+    formatTime(item.start) + "–" + formatTime(item.end || (item.start + item.duration));
+
+  const sentence = document.getElementById("sentence");
+  sentence.textContent = item.text;
+  sentence.classList.toggle("hidden-text", !reveal);
+
+  document.getElementById("bar").style.width =
+    (((index + 1) / items.length) * 100).toFixed(2) + "%";
+}
+
+function focusAnswer() {
+  const answer = document.getElementById("answer");
+  requestAnimationFrame(function () {
+    answer.focus();
+  });
+}
+
+function resetForSentence() {
+  clearTimeout(advanceTimer);
+  document.getElementById("answer").value = "";
+  document.getElementById("feedback").innerHTML = "";
+  reveal = false;
+  updateUI();
+  focusAnswer();
+}
+
+function playCurrent() {
+  if (!playerReady || !items.length) {
+    return;
+  }
+
+  clearInterval(stopTimer);
+
+  const item = items[index];
+  const end = item.end || (item.start + Math.max(item.duration || 0, 0.25));
+
+  player.seekTo(item.start, true);
+  player.playVideo();
+
+  stopTimer = setInterval(function () {
+    const current = player.getCurrentTime();
+    if (current >= end - 0.04) {
+      player.pauseVideo();
+      clearInterval(stopTimer);
+    }
+  }, 40);
+}
+
+function moveSentence(delta, autoplay) {
+  if (!items.length) {
+    return;
+  }
+
+  const nextIndex = Math.max(0, Math.min(items.length - 1, index + delta));
+  if (nextIndex === index && delta !== 0) {
+    return;
+  }
+
+  index = nextIndex;
+  resetForSentence();
+
+  if (autoplay) {
+    window.setTimeout(playCurrent, 80);
+  }
+}
+
+function toggleOriginal() {
+  if (!items.length) {
+    return;
+  }
+  reveal = !reveal;
+  updateUI();
+}
+
+function tokenizeWithOffsets(text) {
+  const tokens = [];
+  const regex = /[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)*/g;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    tokens.push({
+      value: match[0].toLowerCase().replace(/’/g, "'"),
+      start: match.index,
+      end: match.index + match[0].length
+    });
+  }
+
+  return tokens;
+}
+
+function firstMismatch(answerText, expectedText) {
+  const answerTokens = tokenizeWithOffsets(answerText);
+  const expectedTokens = tokenizeWithOffsets(expectedText);
+  const length = Math.max(answerTokens.length, expectedTokens.length);
+
+  for (let i = 0; i < length; i += 1) {
+    const actual = answerTokens[i];
+    const expected = expectedTokens[i];
+
+    if (!actual || !expected || actual.value !== expected.value) {
+      if (actual) {
+        return {
+          wordIndex: i,
+          start: actual.start,
+          end: actual.end
+        };
+      }
+
+      return {
+        wordIndex: i,
+        start: answerText.length,
+        end: answerText.length
+      };
+    }
+  }
+
+  return null;
+}
+
+function jumpToMismatch(mismatch) {
+  const answer = document.getElementById("answer");
+  answer.focus();
+  answer.setSelectionRange(mismatch.start, mismatch.end);
+}
+
+function checkCurrent() {
+  if (!items.length) {
+    return;
+  }
+
+  clearTimeout(advanceTimer);
+
+  const answer = document.getElementById("answer");
+  const feedback = document.getElementById("feedback");
+  const mismatch = firstMismatch(answer.value, items[index].text);
+
+  if (mismatch) {
+    feedback.innerHTML =
+      '<span class="bad">有错误。</span> 已跳到第 ' +
+      String(mismatch.wordIndex + 1) +
+      " 个词。";
+    jumpToMismatch(mismatch);
+    return;
+  }
+
+  feedback.innerHTML = '<span class="ok">✓ 全部正确</span>';
+
+  if (index >= items.length - 1) {
+    feedback.innerHTML = '<span class="ok">✓ 全部正确，练习完成。</span>';
+    return;
+  }
+
+  advanceTimer = window.setTimeout(function () {
+    moveSentence(1, true);
+  }, 350);
+}
+
+async function loadVideo() {
+  const url = document.getElementById("url").value.trim();
+  const status = document.getElementById("status");
+
+  if (!url) {
+    status.innerHTML = '<span class="error">请先输入 YouTube 链接。</span>';
+    return;
+  }
+
+  status.textContent = "正在读取字幕…";
+
+  try {
+    const response = await fetch("/api/transcript?url=" + encodeURIComponent(url));
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "字幕读取失败。");
+    }
+
+    items = data.items || [];
+    videoId = data.video_id;
+    index = 0;
+    reveal = false;
+
+    if (!items.length) {
+      throw new Error("这个视频没有可用于听写的字幕。");
+    }
+
+    const generated = data.is_generated ? " · 自动字幕" : " · 人工字幕";
+    document.getElementById("lang").innerHTML =
+      '<span class="badge">' +
+      (data.language || data.language_code || "字幕") +
+      generated +
+      "</span>";
+
+    status.textContent =
+      "已生成 " + String(items.length) + " 个听写句子。单按 Ctrl 开始/重播当前句。";
+
+    resetForSentence();
+
+    if (playerReady) {
+      player.cueVideoById(videoId);
+    }
+  } catch (error) {
+    status.innerHTML =
+      '<span class="error">' + String(error.message || error) + "</span>";
+  }
+}
+
+document.getElementById("load").addEventListener("click", loadVideo);
+document.getElementById("play").addEventListener("click", playCurrent);
+document.getElementById("prev").addEventListener("click", function () {
+  moveSentence(-1, true);
+});
+document.getElementById("next").addEventListener("click", function () {
+  moveSentence(1, true);
+});
+document.getElementById("show").addEventListener("click", toggleOriginal);
+document.getElementById("check").addEventListener("click", checkCurrent);
+document.getElementById("clear").addEventListener("click", function () {
+  document.getElementById("answer").value = "";
+  document.getElementById("feedback").innerHTML = "";
+  focusAnswer();
+});
+
+window.addEventListener(
+  "keydown",
+  function (event) {
+    if (event.key === "Control") {
+      if (!event.repeat) {
+        ctrlDown = true;
+        ctrlUsedAsChord = false;
+      }
+      return;
+    }
+
+    if (event.ctrlKey) {
+      ctrlUsedAsChord = true;
+
+      if (event.key.toLowerCase() === "h") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleOriginal();
+      }
+      return;
+    }
+
+    const activeId = document.activeElement ? document.activeElement.id : "";
+
+    if (event.key === "Enter" && activeId === "answer" && !event.shiftKey) {
+      event.preventDefault();
+      checkCurrent();
+      return;
+    }
+
+    if (event.key === "Tab" && activeId === "answer") {
+      event.preventDefault();
+      moveSentence(event.shiftKey ? -1 : 1, true);
+    }
+  },
+  true
+);
+
+window.addEventListener(
+  "keyup",
+  function (event) {
+    if (event.key !== "Control") {
+      return;
+    }
+
+    const shouldReplay = ctrlDown && !ctrlUsedAsChord;
+    ctrlDown = false;
+    ctrlUsedAsChord = false;
+
+    if (shouldReplay) {
+      event.preventDefault();
+      playCurrent();
+    }
+  },
+  true
+);
+
+window.onYouTubeIframeAPIReady = function () {
+  player = new YT.Player("player", {
+    height: "390",
+    width: "640",
+    videoId: "",
+    playerVars: {
+      playsinline: 1,
+      rel: 0
+    },
+    events: {
+      onReady: function () {
+        playerReady = true;
+        if (videoId) {
+          player.cueVideoById(videoId);
+        }
+      }
+    }
+  });
+};
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
