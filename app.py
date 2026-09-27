@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from urllib.parse import parse_qs, urlparse
 
 from flask import Flask, jsonify, request, send_from_directory
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 app = Flask(__name__, static_folder="static")
 
@@ -39,6 +41,50 @@ def extract_video_id(value: str) -> str:
         value,
     )
     return match.group(1) if match else ""
+
+
+def build_youtube_api() -> tuple[YouTubeTranscriptApi, str]:
+    """Build the transcript client.
+
+    Local use needs no configuration. Cloud environments such as GitHub Codespaces
+    can opt into a residential/generic proxy by setting environment variables.
+    """
+
+    webshare_username = os.getenv("YT_WEBSHARE_PROXY_USERNAME", "").strip()
+    webshare_password = os.getenv("YT_WEBSHARE_PROXY_PASSWORD", "").strip()
+
+    if webshare_username and webshare_password:
+        locations = [
+            code.strip().lower()
+            for code in os.getenv("YT_WEBSHARE_PROXY_LOCATIONS", "us").split(",")
+            if code.strip()
+        ]
+        return (
+            YouTubeTranscriptApi(
+                proxy_config=WebshareProxyConfig(
+                    proxy_username=webshare_username,
+                    proxy_password=webshare_password,
+                    filter_ip_locations=locations or None,
+                )
+            ),
+            "webshare",
+        )
+
+    http_proxy = os.getenv("YT_HTTP_PROXY", "").strip()
+    https_proxy = os.getenv("YT_HTTPS_PROXY", "").strip()
+
+    if http_proxy or https_proxy:
+        return (
+            YouTubeTranscriptApi(
+                proxy_config=GenericProxyConfig(
+                    http_url=http_proxy or None,
+                    https_url=https_proxy or None,
+                )
+            ),
+            "generic",
+        )
+
+    return YouTubeTranscriptApi(), "direct"
 
 
 def snippet_to_dict(snippet) -> dict:
@@ -140,8 +186,6 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
 
     flush()
 
-    # Caption durations sometimes overlap the next sentence. Never play through
-    # the next sentence's start.
     for index in range(len(sentences) - 1):
         next_start = sentences[index + 1]["start"]
         if sentences[index]["end"] > next_start:
@@ -160,7 +204,7 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
 
 
 def fetch_best_transcript(video_id: str):
-    api = YouTubeTranscriptApi()
+    api, proxy_mode = build_youtube_api()
     transcript_list = api.list(video_id)
 
     selected = None
@@ -193,6 +237,7 @@ def fetch_best_transcript(video_id: str):
         "language": getattr(selected, "language", ""),
         "language_code": getattr(selected, "language_code", ""),
         "is_generated": bool(getattr(selected, "is_generated", False)),
+        "proxy_mode": proxy_mode,
         "items": merge_caption_fragments(snippets),
     }
 
@@ -200,6 +245,12 @@ def fetch_best_transcript(video_id: str):
 @app.get("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+@app.get("/api/health")
+def health():
+    _, proxy_mode = build_youtube_api()
+    return jsonify({"ok": True, "proxy_mode": proxy_mode})
 
 
 @app.get("/api/transcript")
@@ -231,19 +282,29 @@ def transcript():
             }
         )
     except Exception as exc:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": (
-                        "无法取得字幕。该视频可能没有可用字幕，字幕可能受限制，"
-                        "或者 YouTube 暂时阻止了字幕请求。\n\n"
-                        f"{exc}"
-                    ),
-                }
-            ),
-            500,
+        message = str(exc)
+        blocked = (
+            "blocking requests from your ip" in message.lower()
+            or "requestblocked" in message.lower()
+            or "ipblocked" in message.lower()
         )
+
+        if blocked:
+            error = (
+                "YouTube 已阻止当前服务器 IP。视频本身可能有字幕；"
+                "GitHub Codespaces 等云服务器的出口 IP 经常被 YouTube 屏蔽。\n\n"
+                "本地运行通常可以直接使用。若要在 Codespaces 中自动获取字幕，"
+                "请配置住宅代理 Secret（推荐）或通用 HTTP/HTTPS 代理。\n\n"
+                f"{message}"
+            )
+        else:
+            error = (
+                "无法取得字幕。该视频可能没有可用字幕、字幕受限制，"
+                "或者 YouTube 暂时阻止了字幕请求。\n\n"
+                f"{message}"
+            )
+
+        return jsonify({"ok": False, "error": error}), 500
 
 
 if __name__ == "__main__":
