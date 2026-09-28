@@ -11,6 +11,19 @@ from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConf
 
 app = Flask(__name__, static_folder="static")
 
+NON_SPEECH_CUES = (
+    "music",
+    "applause",
+    "laughter",
+    "laughing",
+    "cheering",
+    "inaudible",
+    "foreign language",
+    "silence",
+    "sound effect",
+    "sound effects",
+)
+
 
 def extract_video_id(value: str) -> str:
     value = (value or "").strip()
@@ -107,6 +120,18 @@ def snippet_to_dict(snippet) -> dict:
 def clean_caption_text(text: str) -> str:
     text = html.unescape(text)
     text = text.replace("\n", " ")
+
+    cue_names = "|".join(re.escape(cue) for cue in NON_SPEECH_CUES)
+
+    # Remove YouTube non-speech markers even when they appear inside spoken text,
+    # e.g. "[Music] Hello everyone" -> "Hello everyone".
+    text = re.sub(
+        rf"\[(?:{cue_names})\b[^\]]*\]",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
