@@ -24,6 +24,116 @@ NON_SPEECH_CUES = (
     "sound effects",
 )
 
+# Dictation segmentation targets. These are deliberately shorter than normal
+# written sentences because the unit of practice should be a natural listening
+# phrase rather than a long paragraph-like subtitle.
+TARGET_WORDS = 10
+SOFT_MAX_WORDS = 14
+HARD_MAX_WORDS = 18
+MIN_PHRASE_WORDS = 4
+PAUSE_BREAK_SECONDS = 0.75
+
+WORD_RE = re.compile(r"\b[A-Za-z0-9]+(?:[’'][A-Za-z0-9]+)*\b")
+STRONG_END_RE = re.compile(r'[.!?…]["\'’”)]*$')
+WEAK_END_RE = re.compile(r'[,;:—-]["\'’”)]*$')
+
+# A break immediately after one of these words usually sounds unnatural.
+UNSAFE_END_WORDS = {
+    "a",
+    "an",
+    "the",
+    "to",
+    "of",
+    "in",
+    "on",
+    "at",
+    "for",
+    "with",
+    "from",
+    "by",
+    "as",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "may",
+    "might",
+    "must",
+    "not",
+    "and",
+    "or",
+    "but",
+    "if",
+    "because",
+    "that",
+    "which",
+    "who",
+    "whose",
+    "than",
+    "then",
+}
+
+# Starting a new phrase with these words usually means the previous fragment
+# was cut too early.
+UNSAFE_START_WORDS = {
+    "of",
+    "to",
+    "for",
+    "with",
+    "from",
+    "by",
+    "than",
+    "as",
+    "and",
+    "or",
+}
+
+# These often introduce a new spoken clause and are useful soft breakpoints.
+CLAUSE_STARTERS = {
+    "but",
+    "so",
+    "because",
+    "although",
+    "though",
+    "however",
+    "then",
+    "meanwhile",
+    "while",
+    "when",
+    "if",
+    "since",
+    "therefore",
+    "instead",
+    "yet",
+}
+
+PRONOUN_STARTERS = {
+    "i",
+    "you",
+    "we",
+    "they",
+    "he",
+    "she",
+    "it",
+    "there",
+    "this",
+    "that",
+}
+
 
 def extract_video_id(value: str) -> str:
     value = (value or "").strip()
@@ -100,31 +210,14 @@ def build_youtube_api() -> tuple[YouTubeTranscriptApi, str]:
     return YouTubeTranscriptApi(), "direct"
 
 
-def snippet_to_dict(snippet) -> dict:
-    if isinstance(snippet, dict):
-        text = snippet.get("text", "")
-        start = snippet.get("start", 0)
-        duration = snippet.get("duration", 0)
-    else:
-        text = getattr(snippet, "text", "")
-        start = getattr(snippet, "start", 0)
-        duration = getattr(snippet, "duration", 0)
-
-    return {
-        "text": clean_caption_text(str(text)),
-        "start": float(start or 0),
-        "duration": max(0.0, float(duration or 0)),
-    }
-
-
 def clean_caption_text(text: str) -> str:
     text = html.unescape(text)
     text = text.replace("\n", " ")
 
     cue_names = "|".join(re.escape(cue) for cue in NON_SPEECH_CUES)
 
-    # Remove YouTube non-speech markers even when they appear inside spoken text,
-    # e.g. "[Music] Hello everyone" -> "Hello everyone".
+    # Remove non-speech markers even when they are embedded in spoken text:
+    # "[Music] Hello everyone" -> "Hello everyone".
     text = re.sub(
         rf"\[(?:{cue_names})\b[^\]]*\]",
         " ",
@@ -136,96 +229,257 @@ def clean_caption_text(text: str) -> str:
     return text
 
 
-def is_non_speech_caption(text: str) -> bool:
-    lowered = text.lower().strip()
-    return bool(
-        re.fullmatch(
-            r"[\[(](?:music|applause|laughter|laughing|cheering|inaudible|"
-            r"foreign language|silence|sound effects?)[^\])]*[\])]",
-            lowered,
-        )
+def snippet_to_dict(snippet) -> dict:
+    if isinstance(snippet, dict):
+        text = snippet.get("text", "")
+        start = snippet.get("start", 0)
+        duration = snippet.get("duration", 0)
+    else:
+        text = getattr(snippet, "text", "")
+        start = getattr(snippet, "start", 0)
+        duration = getattr(snippet, "duration", 0)
+
+    start = float(start or 0)
+    duration = max(0.0, float(duration or 0))
+
+    return {
+        "text": clean_caption_text(str(text)),
+        "start": start,
+        "end": start + max(duration, 0.25),
+        "duration": duration,
+    }
+
+
+def words(text: str) -> list[str]:
+    return [
+        match.group(0).lower().replace("’", "'")
+        for match in WORD_RE.finditer(text)
+    ]
+
+
+def word_count(text: str) -> int:
+    return len(words(text))
+
+
+def buffer_word_count(buffer: list[dict]) -> int:
+    return sum(word_count(item["text"]) for item in buffer)
+
+
+def starts_new_clause(text: str) -> bool:
+    tokens = words(text)[:2]
+    if not tokens:
+        return False
+
+    if tokens[0] in CLAUSE_STARTERS:
+        return True
+
+    # "and I...", "and we...", etc. are often a new spoken clause,
+    # while a bare "and" before a noun phrase is not a good break.
+    return (
+        tokens[0] == "and"
+        and len(tokens) > 1
+        and tokens[1] in PRONOUN_STARTERS
     )
 
 
-def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
-    """Merge small caption fragments into practical sentence-sized units."""
+def boundary_score(left: dict, right: dict, phrase_words: int) -> int:
+    """Score how natural it is to end a dictation phrase at this boundary."""
 
-    clean = [
-        item
-        for item in snippets
-        if item["text"] and not is_non_speech_caption(item["text"])
-    ]
+    left_text = left["text"]
+    right_text = right["text"]
+
+    if STRONG_END_RE.search(left_text):
+        return 1000
+
+    score = 0
+
+    if WEAK_END_RE.search(left_text):
+        score += 90
+
+    gap = max(0.0, right["start"] - left["end"])
+    if gap >= 1.0:
+        score += 95
+    elif gap >= 0.75:
+        score += 80
+    elif gap >= 0.5:
+        score += 55
+    elif gap >= 0.3:
+        score += 25
+
+    if starts_new_clause(right_text):
+        score += 45
+
+    left_words = words(left_text)
+    right_words = words(right_text)
+
+    if left_words and left_words[-1] in UNSAFE_END_WORDS:
+        score -= 120
+
+    if right_words and right_words[0] in UNSAFE_START_WORDS:
+        score -= 60
+
+    # Prefer a compact phrase near the target length.
+    score += max(0, 28 - abs(phrase_words - TARGET_WORDS) * 4)
+
+    if phrase_words > SOFT_MAX_WORDS:
+        score -= (phrase_words - SOFT_MAX_WORDS) * 8
+
+    return score
+
+
+def choose_break(buffer: list[dict], force: bool = False):
+    """Choose the best existing caption boundary in the current buffer.
+
+    We only cut at real YouTube caption boundaries so playback timestamps remain
+    accurate. When possible we use punctuation, pauses, or clause starts instead
+    of cutting at an arbitrary word count.
+    """
+
+    running_words = 0
+    best = None
+
+    for index in range(len(buffer) - 1):
+        running_words += word_count(buffer[index]["text"])
+
+        if running_words < MIN_PHRASE_WORDS:
+            continue
+
+        if running_words > HARD_MAX_WORDS:
+            break
+
+        score = boundary_score(
+            buffer[index],
+            buffer[index + 1],
+            running_words,
+        )
+
+        if best is None or score > best[0]:
+            best = (score, index + 1)
+
+    if best and (best[0] >= 45 or force):
+        return best[1]
+
+    return None
+
+
+def make_segment(units: list[dict]) -> dict:
+    text = re.sub(
+        r"\s+",
+        " ",
+        " ".join(item["text"] for item in units),
+    ).strip()
+
+    start = units[0]["start"]
+    end = max(units[-1]["end"], start + 0.25)
+
+    return {
+        "text": text,
+        "start": round(start, 3),
+        "end": round(end, 3),
+        "duration": round(max(0.25, end - start), 3),
+    }
+
+
+def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
+    """Turn YouTube caption fragments into short, natural dictation phrases.
+
+    Priority:
+    1. Real sentence-ending punctuation.
+    2. Audible pauses.
+    3. Commas/semicolons and likely clause boundaries.
+    4. Only as a last resort, a safe caption boundary near the target length.
+
+    This avoids the old behavior of blindly cutting after N words/seconds.
+    """
+
+    clean = [item for item in snippets if item["text"]]
     if not clean:
         return []
 
-    sentences: list[dict] = []
-    buffer: list[str] = []
-    start: float | None = None
-    end = 0.0
-    previous_end: float | None = None
+    segments: list[dict] = []
+    buffer: list[dict] = []
 
-    def flush() -> None:
-        nonlocal buffer, start, end
-        if not buffer or start is None:
+    def emit(count: int | None = None) -> None:
+        nonlocal buffer
+
+        if not buffer:
             return
 
-        text = re.sub(r"\s+", " ", " ".join(buffer)).strip()
-        if text:
-            sentences.append(
-                {
-                    "text": text,
-                    "start": round(start, 3),
-                    "end": round(max(end, start + 0.25), 3),
-                }
+        if count is None:
+            count = len(buffer)
+
+        chunk = buffer[:count]
+        buffer = buffer[count:]
+
+        if chunk:
+            segment = make_segment(chunk)
+            if segment["text"]:
+                segments.append(segment)
+
+    def split_long_buffer(force: bool) -> None:
+        while (
+            len(buffer) > 1
+            and buffer_word_count(buffer) > SOFT_MAX_WORDS
+        ):
+            break_index = choose_break(
+                buffer,
+                force=force
+                or buffer_word_count(buffer) >= HARD_MAX_WORDS,
             )
 
-        buffer = []
-        start = None
-        end = 0.0
+            if break_index is None:
+                return
 
-    for item in clean:
-        text = item["text"]
-        item_start = item["start"]
-        item_end = item_start + max(item["duration"], 0.25)
+            emit(break_index)
 
-        gap = 0.0 if previous_end is None else max(0.0, item_start - previous_end)
-        if buffer and gap > 1.4:
-            flush()
+    for index, item in enumerate(clean):
+        buffer.append(item)
 
-        if start is None:
-            start = item_start
+        next_item = clean[index + 1] if index + 1 < len(clean) else None
 
-        buffer.append(text)
-        end = max(end, item_end)
-        previous_end = item_end
+        # If the phrase has become long, try to cut at the best natural boundary
+        # already present in the buffer. Do not blindly cut at the current item.
+        split_long_buffer(force=False)
 
-        combined = " ".join(buffer)
-        elapsed = end - (start or 0.0)
-        word_count = len(re.findall(r"\b\w+[’']?\w*\b", combined))
+        # A real sentence end is always a valid boundary. If the sentence itself
+        # is long, break it into shorter clauses first.
+        if STRONG_END_RE.search(item["text"]):
+            split_long_buffer(force=True)
+            emit()
+            continue
 
-        has_sentence_end = bool(re.search(r'[.!?…]["\'’”)]*$', text))
-        is_long_enough = elapsed >= 11.0 or word_count >= 26
+        # A noticeable pause is a strong spoken-language boundary even when
+        # auto-generated captions contain no punctuation.
+        if next_item is not None:
+            gap = max(0.0, next_item["start"] - item["end"])
+            if (
+                gap >= PAUSE_BREAK_SECONDS
+                and buffer_word_count(buffer) >= MIN_PHRASE_WORDS
+            ):
+                emit()
 
-        if has_sentence_end or is_long_enough:
-            flush()
+    if buffer:
+        split_long_buffer(force=True)
+        emit()
 
-    flush()
-
-    for index in range(len(sentences) - 1):
-        next_start = sentences[index + 1]["start"]
-        if sentences[index]["end"] > next_start:
-            sentences[index]["end"] = max(
-                sentences[index]["start"] + 0.25,
+    # Prevent a segment from playing into the next segment when YouTube caption
+    # durations overlap slightly.
+    for index in range(len(segments) - 1):
+        next_start = segments[index + 1]["start"]
+        if segments[index]["end"] > next_start:
+            segments[index]["end"] = max(
+                segments[index]["start"] + 0.25,
                 next_start,
             )
+            segments[index]["duration"] = round(
+                max(
+                    0.25,
+                    segments[index]["end"] - segments[index]["start"],
+                ),
+                3,
+            )
 
-    for sentence in sentences:
-        sentence["duration"] = round(
-            max(0.25, sentence["end"] - sentence["start"]),
-            3,
-        )
-
-    return sentences
+    return segments
 
 
 def fetch_best_transcript(video_id: str):
