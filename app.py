@@ -153,14 +153,14 @@ def extract_video_id(value: str) -> str:
             if query.get("v"):
                 return query["v"][0]
 
-            match = re.search(r"/(?:shorts|embed)/([^/?]+)", parsed.path)
+            match = re.search(r"/(?:shorts|embed|podcast)/([^/?]+)", parsed.path)
             if match:
                 return match.group(1)
     except Exception:
         pass
 
     match = re.search(
-        r"(?:v=|youtu\.be/|shorts/|embed/)([A-Za-z0-9_-]{6,})",
+        r"(?:v=|youtu\.be/|shorts/|embed/|podcast/)([A-Za-z0-9_-]{6,})",
         value,
     )
     return match.group(1) if match else ""
