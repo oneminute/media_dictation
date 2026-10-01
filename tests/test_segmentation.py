@@ -1,6 +1,22 @@
 import unittest
 
-from app import clean_caption_text, merge_caption_fragments
+from app import clean_caption_text, extract_video_id, merge_caption_fragments
+
+
+class UrlParsingTests(unittest.TestCase):
+    def test_youtube_music_watch_url(self):
+        self.assertEqual(
+            extract_video_id(
+                "https://music.youtube.com/watch?v=15m_iQaKHVg&t=82"
+            ),
+            "15m_iQaKHVg",
+        )
+
+    def test_youtube_music_podcast_url(self):
+        self.assertEqual(
+            extract_video_id("https://music.youtube.com/podcast/AVRF8B504GE"),
+            "AVRF8B504GE",
+        )
 
 
 class SegmentationTests(unittest.TestCase):
