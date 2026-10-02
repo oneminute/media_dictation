@@ -134,6 +134,19 @@ button.warn{background:#fef3c7;color:#92400e}
   font-weight:650;
 }
 .hint{font-size:13px;color:var(--muted);font-weight:400}
+.translation-box{
+  display:none;
+  margin-top:12px;
+  padding:12px 14px;
+  border:1px solid #dbe3f0;
+  border-radius:10px;
+  background:#f8fafc;
+  line-height:1.6;
+  font-size:16px;
+}
+.translation-box.visible{display:block}
+.translation-meta{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+.corrected-word{font-weight:700;color:var(--primary)}
 </style>
 </head>
 <body>
@@ -171,7 +184,10 @@ button.warn{background:#fef3c7;color:#92400e}
         <button id="prev">← 上一句</button>
         <button id="next">下一句 →</button>
         <button id="show" class="warn">显示/隐藏原文</button>
+        <button id="translate">中文翻译</button>
       </div>
+
+      <div id="translation" class="translation-box"></div>
 
       <div class="answer-label">
         <span>你的听写</span>
@@ -199,7 +215,7 @@ button.warn{background:#fef3c7;color:#92400e}
     <strong>快捷键：</strong>
     <span class="kbd">Ctrl</span> 单独按下并松开：重播当前句；
     <span class="kbd">Enter</span>：检查答案；
-    错误时自动跳到第一个错误单词，全部正确时自动进入并播放下一句；
+    每次只修正第一个错误词/漏词/多余词，其余输入保持不变；整句正确后停在当前句；
     <span class="kbd">Ctrl</span> + <span class="kbd">H</span>：显示/隐藏原文；
     <span class="kbd">Tab</span> / <span class="kbd">Shift</span> + <span class="kbd">Tab</span>：下一句/上一句。
   </div>
@@ -213,7 +229,7 @@ let index = 0;
 let reveal = false;
 let videoId = "";
 let stopTimer = null;
-let advanceTimer = null;
+const translationCache = new Map();
 
 let ctrlDown = false;
 let ctrlUsedAsChord = false;
@@ -252,9 +268,11 @@ function focusAnswer() {
 }
 
 function resetForSentence() {
-  clearTimeout(advanceTimer);
   document.getElementById("answer").value = "";
   document.getElementById("feedback").innerHTML = "";
+  const translation = document.getElementById("translation");
+  translation.textContent = "";
+  translation.classList.remove("visible");
   reveal = false;
   updateUI();
   focusAnswer();
@@ -315,6 +333,7 @@ function tokenizeWithOffsets(text) {
 
   while ((match = regex.exec(text)) !== null) {
     tokens.push({
+      raw: match[0],
       value: match[0].toLowerCase().replace(/’/g, "'"),
       start: match.index,
       end: match.index + match[0].length
@@ -324,39 +343,191 @@ function tokenizeWithOffsets(text) {
   return tokens;
 }
 
-function firstMismatch(answerText, expectedText) {
-  const answerTokens = tokenizeWithOffsets(answerText);
-  const expectedTokens = tokenizeWithOffsets(expectedText);
-  const length = Math.max(answerTokens.length, expectedTokens.length);
+function firstEdit(answerText, expectedText) {
+  const actual = tokenizeWithOffsets(answerText);
+  const expected = tokenizeWithOffsets(expectedText);
+  const m = actual.length;
+  const n = expected.length;
 
-  for (let i = 0; i < length; i += 1) {
-    const actual = answerTokens[i];
-    const expected = expectedTokens[i];
+  const dp = Array.from({length:m + 1}, function () {
+    return Array(n + 1).fill(0);
+  });
 
-    if (!actual || !expected || actual.value !== expected.value) {
-      if (actual) {
-        return {
-          wordIndex: i,
-          start: actual.start,
-          end: actual.end
-        };
+  for (let i = m; i >= 0; i -= 1) {
+    for (let j = n; j >= 0; j -= 1) {
+      if (i === m && j === n) {
+        dp[i][j] = 0;
+      } else if (i === m) {
+        dp[i][j] = n - j;
+      } else if (j === n) {
+        dp[i][j] = m - i;
+      } else if (actual[i].value === expected[j].value) {
+        dp[i][j] = dp[i + 1][j + 1];
+      } else {
+        dp[i][j] = 1 + Math.min(
+          dp[i + 1][j + 1],
+          dp[i][j + 1],
+          dp[i + 1][j]
+        );
       }
-
-      return {
-        wordIndex: i,
-        start: answerText.length,
-        end: answerText.length
-      };
     }
   }
 
-  return null;
+  let i = 0;
+  let j = 0;
+
+  while (
+    i < m &&
+    j < n &&
+    actual[i].value === expected[j].value
+  ) {
+    i += 1;
+    j += 1;
+  }
+
+  if (i === m && j === n) {
+    return null;
+  }
+
+  // Prefer an insertion/deletion when the following word makes the alignment
+  // obvious. This prevents one missing word from making every later word look wrong.
+  if (
+    i < m &&
+    j + 1 < n &&
+    actual[i].value === expected[j + 1].value &&
+    dp[i][j] === 1 + dp[i][j + 1]
+  ) {
+    return {
+      type: "missing",
+      actualIndex: i,
+      expectedIndex: j,
+      actual: actual[i] || null,
+      expected: expected[j]
+    };
+  }
+
+  if (
+    i + 1 < m &&
+    j < n &&
+    actual[i + 1].value === expected[j].value &&
+    dp[i][j] === 1 + dp[i + 1][j]
+  ) {
+    return {
+      type: "extra",
+      actualIndex: i,
+      expectedIndex: j,
+      actual: actual[i],
+      expected: expected[j] || null
+    };
+  }
+
+  if (
+    i < m &&
+    j < n &&
+    dp[i][j] === 1 + dp[i + 1][j + 1]
+  ) {
+    return {
+      type: "replace",
+      actualIndex: i,
+      expectedIndex: j,
+      actual: actual[i],
+      expected: expected[j]
+    };
+  }
+
+  if (j < n && dp[i][j] === 1 + dp[i][j + 1]) {
+    return {
+      type: "missing",
+      actualIndex: i,
+      expectedIndex: j,
+      actual: actual[i] || null,
+      expected: expected[j]
+    };
+  }
+
+  return {
+    type: "extra",
+    actualIndex: i,
+    expectedIndex: j,
+    actual: actual[i],
+    expected: expected[j] || null
+  };
 }
 
-function jumpToMismatch(mismatch) {
+function applyFirstCorrection(edit) {
   const answer = document.getElementById("answer");
+  const text = answer.value;
+  let nextText = text;
+  let selectionStart = 0;
+  let selectionEnd = 0;
+  let message = "";
+
+  if (edit.type === "replace") {
+    const word = edit.expected.raw;
+    nextText =
+      text.slice(0, edit.actual.start) +
+      word +
+      text.slice(edit.actual.end);
+    selectionStart = edit.actual.start;
+    selectionEnd = selectionStart + word.length;
+    message =
+      '正确单词：<span class="corrected-word">' +
+      word +
+      "</span>";
+  } else if (edit.type === "missing") {
+    const word = edit.expected.raw;
+    const position = edit.actual ? edit.actual.start : text.length;
+
+    let inserted = word;
+    let wordStart = position;
+
+    if (position === 0) {
+      if (text.length && !/^\s/.test(text)) {
+        inserted += " ";
+      }
+    } else if (position === text.length) {
+      if (!/\s$/.test(text)) {
+        inserted = " " + inserted;
+        wordStart += 1;
+      }
+    } else {
+      const needsTrailingSpace = !/^\s/.test(text.slice(position));
+      inserted += needsTrailingSpace ? " " : "";
+    }
+
+    nextText = text.slice(0, position) + inserted + text.slice(position);
+    selectionStart = wordStart;
+    selectionEnd = wordStart + word.length;
+    message =
+      '漏词，已补上：<span class="corrected-word">' +
+      word +
+      "</span>";
+  } else {
+    let start = edit.actual.start;
+    let end = edit.actual.end;
+
+    // Remove one adjacent separator with an extra word so the remaining
+    // sentence stays readable without rewriting any other words.
+    if (end < text.length && /\s/.test(text[end])) {
+      end += 1;
+    } else if (start > 0 && /\s/.test(text[start - 1])) {
+      start -= 1;
+    }
+
+    const removed = edit.actual.raw;
+    nextText = text.slice(0, start) + text.slice(end);
+    selectionStart = start;
+    selectionEnd = start;
+    message =
+      '多余单词已删除：<span class="corrected-word">' +
+      removed +
+      "</span>";
+  }
+
+  answer.value = nextText;
   answer.focus();
-  answer.setSelectionRange(mismatch.start, mismatch.end);
+  answer.setSelectionRange(selectionStart, selectionEnd);
+  document.getElementById("feedback").innerHTML = message;
 }
 
 function checkCurrent() {
@@ -364,31 +535,74 @@ function checkCurrent() {
     return;
   }
 
-  clearTimeout(advanceTimer);
+  const edit = firstEdit(
+    document.getElementById("answer").value,
+    items[index].text
+  );
 
-  const answer = document.getElementById("answer");
-  const feedback = document.getElementById("feedback");
-  const mismatch = firstMismatch(answer.value, items[index].text);
-
-  if (mismatch) {
-    feedback.innerHTML =
-      '<span class="bad">有错误。</span> 已跳到第 ' +
-      String(mismatch.wordIndex + 1) +
-      " 个词。";
-    jumpToMismatch(mismatch);
+  if (edit) {
+    applyFirstCorrection(edit);
     return;
   }
 
-  feedback.innerHTML = '<span class="ok">✓ 全部正确</span>';
+  document.getElementById("feedback").innerHTML =
+    '<span class="ok">✓ 全部正确</span>';
+  focusAnswer();
+}
 
-  if (index >= items.length - 1) {
-    feedback.innerHTML = '<span class="ok">✓ 全部正确，练习完成。</span>';
+async function translateCurrent() {
+  if (!items.length) {
     return;
   }
 
-  advanceTimer = window.setTimeout(function () {
-    moveSentence(1, true);
-  }, 350);
+  const box = document.getElementById("translation");
+  const button = document.getElementById("translate");
+  const source = items[index].text;
+
+  if (translationCache.has(source)) {
+    const cached = translationCache.get(source);
+    box.innerHTML =
+      cached.translation +
+      '<span class="translation-meta">' +
+      cached.model +
+      "</span>";
+    box.classList.add("visible");
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "翻译中…";
+  box.textContent = "正在生成中文翻译…";
+  box.classList.add("visible");
+
+  try {
+    const response = await fetch("/api/translate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: source})
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "翻译失败。");
+    }
+
+    translationCache.set(source, {
+      translation: data.translation,
+      model: data.model
+    });
+
+    box.innerHTML =
+      data.translation +
+      '<span class="translation-meta">' +
+      data.model +
+      "</span>";
+  } catch (error) {
+    box.textContent = String(error.message || error);
+  } finally {
+    button.disabled = false;
+    button.textContent = "中文翻译";
+  }
 }
 
 async function loadVideo() {
@@ -449,6 +663,7 @@ document.getElementById("next").addEventListener("click", function () {
   moveSentence(1, true);
 });
 document.getElementById("show").addEventListener("click", toggleOriginal);
+document.getElementById("translate").addEventListener("click", translateCurrent);
 document.getElementById("check").addEventListener("click", checkCurrent);
 document.getElementById("clear").addEventListener("click", function () {
   document.getElementById("answer").value = "";
