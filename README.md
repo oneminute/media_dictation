@@ -15,6 +15,8 @@ A local web app for sentence-by-sentence YouTube dictation practice.
 - A fully correct sentence stays on the current sentence instead of auto-advancing.
 - Optional on-demand Simplified Chinese translation through the OpenAI Responses API.
 - Lightweight local SQLite history for sessions, dictation attempts, errors, progress, and translation cache.
+- Learning Center at `/learning` with daily summary, overall report, frequent errors, performance estimate, practice history, and resume links.
+- Resume unfinished practice from the earliest sentence that has not yet been completed correctly.
 - Optional proxy support for cloud environments such as GitHub Codespaces.
 
 ### Keyboard shortcuts
@@ -56,6 +58,29 @@ Then open `http://127.0.0.1:8765`.
 python -m pip install -r requirements.txt
 python app.py
 ```
+
+## Learning Center and resume
+
+Open:
+
+```
+http://127.0.0.1:8765/learning
+```
+
+The main dictation page also has a **学习中心** button.
+
+The Learning Center shows:
+
+- today's completed sentences, correction count, and first-pass accuracy;
+- cumulative completed sentences;
+- an internal listening-dictation performance score and label;
+- today's and cumulative frequent error words;
+- recent practice sessions with progress and error counts;
+- a **继续练习** button for every unfinished session.
+
+Resume is based on the earliest sentence in that saved session that has not yet received a fully-correct Enter check. The SQLite file persists across days, so an unfinished practice can be continued later as long as `data/media_dictation.db` is kept.
+
+The performance estimate is intentionally **not labeled as CEFR**. The source material is not standardized for difficulty, so claiming A2/B1/B2 from ordinary podcast dictation data would be misleading. The current estimate uses first-pass accuracy, correction frequency, and sample size. A standardized placement test can be added later if CEFR estimation is desired.
 
 ## Local SQLite data
 
