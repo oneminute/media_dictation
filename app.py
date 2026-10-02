@@ -535,7 +535,7 @@ def reasoning_kwargs(model: str) -> dict:
     return {}
 
 
-def translate_to_chinese(text: str) -> tuple[str, str]:
+def translate_to_chinese(text: str) -> tuple[str, str, str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -620,7 +620,7 @@ def normalize_lookup_word(word: str) -> str:
 def translate_word_in_context(
     word: str,
     context_sentence: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
