@@ -489,9 +489,81 @@ def get_session_detail(session_id: int) -> dict[str, Any] | None:
     }
 
 
+def _today_summary() -> dict[str, Any]:
+    with connect() as conn:
+        base = conn.execute(
+            """
+            SELECT
+                COUNT(DISTINCT session_id) AS sessions,
+                COUNT(*) AS checks,
+                SUM(CASE WHEN event_type != 'correct' THEN 1 ELSE 0 END) AS errors
+            FROM attempts
+            WHERE date(created_at, 'localtime') = date('now', 'localtime')
+            """
+        ).fetchone()
+
+        completed = conn.execute(
+            """
+            SELECT COUNT(*) AS completed_sentences
+            FROM (
+                SELECT DISTINCT session_id, sentence_index
+                FROM attempts
+                WHERE event_type = 'correct'
+                  AND date(created_at, 'localtime') = date('now', 'localtime')
+            )
+            """
+        ).fetchone()
+
+        first_pass = conn.execute(
+            """
+            WITH today_events AS (
+                SELECT
+                    session_id,
+                    sentence_index,
+                    event_type,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY session_id, sentence_index
+                        ORDER BY id
+                    ) AS rn
+                FROM attempts
+                WHERE date(created_at, 'localtime') = date('now', 'localtime')
+            )
+            SELECT
+                COUNT(*) AS attempted_sentences,
+                SUM(CASE WHEN event_type = 'correct' THEN 1 ELSE 0 END)
+                    AS first_pass_correct
+            FROM today_events
+            WHERE rn = 1
+            """
+        ).fetchone()
+
+    sessions = int(base["sessions"] or 0)
+    checks = int(base["checks"] or 0)
+    errors = int(base["errors"] or 0)
+    completed_count = int(completed["completed_sentences"] or 0)
+    attempted = int(first_pass["attempted_sentences"] or 0)
+    first_correct = int(first_pass["first_pass_correct"] or 0)
+
+    return {
+        "sessions": sessions,
+        "completed_sentences": completed_count,
+        "total_items": 0,
+        "errors": errors,
+        "checks": checks,
+        "attempted_sentences": attempted,
+        "first_pass_correct": first_correct,
+        "first_pass_accuracy": (
+            round(first_correct * 100.0 / attempted, 1) if attempted else None
+        ),
+        "errors_per_completed_sentence": (
+            round(errors / completed_count, 2) if completed_count else None
+        ),
+    }
+
+
 def get_learning_report() -> dict[str, Any]:
     overall = _summary_for_where()
-    today = _summary_for_where("date(started_at, 'localtime') = date('now', 'localtime')")
+    today = _today_summary()
 
     with connect() as conn:
         top_errors = conn.execute(
