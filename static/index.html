@@ -23,6 +23,11 @@ body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
 }
 .wrap{max-width:1080px;margin:0 auto;padding:22px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.topbar a{
+  text-decoration:none;border-radius:10px;padding:9px 12px;
+  background:#e8efff;color:#1749b3;font-weight:700;white-space:nowrap;
+}
 h1{font-size:28px;margin:0 0 6px}
 .sub{color:var(--muted);margin-bottom:18px}
 .card{
@@ -151,8 +156,13 @@ button.warn{background:#fef3c7;color:#92400e}
 </head>
 <body>
 <div class="wrap">
-  <h1>Media Dictation</h1>
-  <div class="sub">粘贴 YouTube 或 YouTube Music Podcast 链接，逐句听写。原文默认隐藏。</div>
+  <div class="topbar">
+    <div>
+      <h1>Media Dictation</h1>
+      <div class="sub">粘贴 YouTube 或 YouTube Music Podcast 链接，逐句听写。原文默认隐藏。</div>
+    </div>
+    <a href="/learning">学习中心</a>
+  </div>
 
   <div class="card">
     <div class="url-row">
@@ -682,7 +692,8 @@ async function startPracticeSession(sourceUrl, transcriptData) {
   }
 }
 
-async function loadVideo() {
+async function loadVideo(options) {
+  options = options || {};
   const url = document.getElementById("url").value.trim();
   const status = document.getElementById("status");
 
@@ -703,7 +714,13 @@ async function loadVideo() {
 
     items = data.items || [];
     videoId = data.video_id;
-    index = 0;
+    index = Math.max(
+      0,
+      Math.min(
+        items.length ? items.length - 1 : 0,
+        Number(options.resumeIndex || 0)
+      )
+    );
     reveal = false;
 
     if (!items.length) {
@@ -718,9 +735,15 @@ async function loadVideo() {
       "</span>";
 
     status.textContent =
-      "已生成 " + String(items.length) + " 个听写句子。单按 Ctrl 开始/重播当前句。";
+      options.reuseSessionId
+        ? "已恢复练习，第 " + String(index + 1) + " / " + String(items.length) + " 句。"
+        : "已生成 " + String(items.length) + " 个听写句子。单按 Ctrl 开始/重播当前句。";
 
-    await startPracticeSession(url, data);
+    if (options.reuseSessionId) {
+      sessionId = Number(options.reuseSessionId);
+    } else {
+      await startPracticeSession(url, data);
+    }
     resetForSentence();
 
     if (playerReady) {
@@ -732,7 +755,41 @@ async function loadVideo() {
   }
 }
 
-document.getElementById("load").addEventListener("click", loadVideo);
+async function resumeFromQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const resumeId = params.get("resume");
+
+  if (!resumeId) {
+    return;
+  }
+
+  const status = document.getElementById("status");
+  status.textContent = "正在恢复上次练习…";
+
+  try {
+    const response = await fetch("/api/session/" + encodeURIComponent(resumeId));
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "无法读取练习记录。");
+    }
+
+    const session = data.session;
+    document.getElementById("url").value = session.source_url;
+
+    await loadVideo({
+      reuseSessionId: session.id,
+      resumeIndex: session.resume_index
+    });
+  } catch (error) {
+    status.innerHTML =
+      '<span class="error">' + String(error.message || error) + "</span>";
+  }
+}
+
+document.getElementById("load").addEventListener("click", function () {
+  loadVideo();
+});
 document.getElementById("play").addEventListener("click", playCurrent);
 document.getElementById("prev").addEventListener("click", function () {
   moveSentence(-1, true);
@@ -805,6 +862,8 @@ window.addEventListener(
   },
   true
 );
+
+resumeFromQuery();
 
 window.onYouTubeIframeAPIReady = function () {
   player = new YT.Player("player", {
