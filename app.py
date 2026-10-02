@@ -21,15 +21,19 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 from storage import (
+    add_vocabulary_word,
     create_session,
     get_learning_report,
     get_session_detail,
     get_session_history,
     get_stats,
     get_translation,
+    get_vocabulary,
+    get_word_translation,
     init_db,
     record_attempt,
     save_translation,
+    save_word_translation,
 )
 
 load_dotenv()
@@ -584,6 +588,80 @@ def translate_to_chinese(text: str) -> tuple[str, str]:
     return translation, model
 
 
+def normalize_lookup_word(word: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", word.lower())
+
+
+def translate_word_in_context(
+    word: str,
+    context_sentence: str,
+) -> tuple[str, str]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "未配置 OPENAI_API_KEY。请在项目根目录 .env 中设置 API key。"
+        )
+
+    model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini").strip()
+    if not model:
+        model = "gpt-4o-mini"
+
+    timeout = openai_timeout_seconds()
+    client = OpenAI(
+        api_key=api_key,
+        timeout=timeout,
+        max_retries=0,
+    )
+
+    prompt = (
+        f"Target word: {word}\n"
+        f"Sentence: {context_sentence}\n\n"
+        "Give the concise Simplified Chinese meaning of the target word as used "
+        "in this sentence. Return only the Chinese meaning, normally 1-8 Chinese "
+        "characters or a very short phrase. Do not explain and do not translate "
+        "the full sentence."
+    )
+
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            max_output_tokens=80,
+        )
+    except AuthenticationError as exc:
+        raise RuntimeError(
+            "OpenAI API key 无效或未被当前项目接受。请检查 .env 中的 OPENAI_API_KEY。"
+        ) from exc
+    except PermissionDeniedError as exc:
+        raise RuntimeError(
+            f"当前 API 项目没有权限使用模型 {model}。"
+        ) from exc
+    except NotFoundError as exc:
+        raise RuntimeError(
+            f"找不到模型 {model}，或当前 API 项目无权访问该模型。"
+        ) from exc
+    except RateLimitError as exc:
+        raise RuntimeError(
+            "OpenAI API 返回限流/额度错误。请检查 API 项目的余额、预算或速率限制。"
+        ) from exc
+    except APITimeoutError as exc:
+        raise RuntimeError(
+            f"连接 OpenAI API 超时（{timeout:g} 秒）。"
+        ) from exc
+    except APIConnectionError as exc:
+        raise RuntimeError(
+            "无法连接 OpenAI API。请检查本机网络、代理、防火墙或 DNS。"
+        ) from exc
+    except BadRequestError as exc:
+        raise RuntimeError(f"OpenAI API 拒绝了请求：{exc}") from exc
+
+    translation = (response.output_text or "").strip()
+    if not translation:
+        raise RuntimeError("OpenAI API 返回了空的单词释义。")
+
+    return translation, model
+
+
 def fetch_best_transcript(video_id: str):
     api, proxy_mode = build_youtube_api()
     transcript_list = api.list(video_id)
@@ -750,6 +828,107 @@ def session_detail(session_id: int):
 @app.get("/api/report")
 def report():
     return jsonify({"ok": True, **get_learning_report()})
+
+
+@app.post("/api/word-lookup")
+def word_lookup():
+    payload = request.get_json(silent=True) or {}
+    display_word = str(payload.get("word", "")).strip()
+    context_sentence = str(payload.get("context", "")).strip()
+
+    normalized_word = normalize_lookup_word(display_word)
+    if not normalized_word:
+        return jsonify({"ok": False, "error": "没有可查询的单词。"}), 400
+
+    if not context_sentence:
+        return jsonify({"ok": False, "error": "缺少当前句子的语境。"}), 400
+
+    if len(display_word) > 100 or len(context_sentence) > 2000:
+        return jsonify({"ok": False, "error": "查询内容过长。"}), 400
+
+    cached = get_word_translation(normalized_word, context_sentence)
+    if cached is not None:
+        return jsonify(
+            {
+                "ok": True,
+                "word": display_word,
+                "normalized_word": normalized_word,
+                "translation": cached["translation"],
+                "model": cached["model"],
+                "cached": True,
+            }
+        )
+
+    try:
+        translation, model = translate_word_in_context(
+            display_word,
+            context_sentence,
+        )
+        save_word_translation(
+            normalized_word=normalized_word,
+            display_word=display_word,
+            context_sentence=context_sentence,
+            translation=translation,
+            model=model,
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "word": display_word,
+                "normalized_word": normalized_word,
+                "translation": translation,
+                "model": model,
+                "cached": False,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"单词查询失败：{exc}"}), 500
+
+
+@app.get("/api/vocabulary")
+def vocabulary_list():
+    try:
+        limit = int(request.args.get("limit", "200"))
+    except ValueError:
+        limit = 200
+
+    return jsonify({"ok": True, "items": get_vocabulary(limit=limit)})
+
+
+@app.post("/api/vocabulary")
+def vocabulary_add():
+    payload = request.get_json(silent=True) or {}
+
+    display_word = str(payload.get("word", "")).strip()
+    normalized_word = normalize_lookup_word(display_word)
+    translation = str(payload.get("translation", "")).strip()
+    context_sentence = str(payload.get("context", "")).strip()
+    video_id = str(payload.get("video_id", "")).strip() or None
+    source_url = str(payload.get("source_url", "")).strip() or None
+
+    if not normalized_word or not translation:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "缺少单词或中文释义。",
+                }
+            ),
+            400,
+        )
+
+    try:
+        item = add_vocabulary_word(
+            normalized_word=normalized_word,
+            display_word=display_word,
+            translation=translation,
+            context_sentence=context_sentence,
+            video_id=video_id,
+            source_url=source_url,
+        )
+        return jsonify({"ok": True, "item": item})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"加入生词本失败：{exc}"}), 500
 
 
 @app.post("/api/translate")
