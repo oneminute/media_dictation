@@ -61,6 +61,15 @@ a.button{
 }
 .empty{padding:24px 0;color:var(--muted);text-align:center}
 .report{line-height:1.8}
+.vocab-item{
+  padding:13px 0;border-top:1px solid var(--line);
+}
+.vocab-item:first-child{border-top:0}
+.vocab-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.vocab-word{font-size:19px;font-weight:750}
+.vocab-meaning{font-size:16px;color:#1749b3}
+.vocab-context{margin-top:5px;color:#475467;line-height:1.55}
+.vocab-meta{margin-top:5px;color:var(--muted);font-size:12px}
 strong.value{color:var(--text)}
 </style>
 </head>
@@ -105,6 +114,14 @@ strong.value{color:var(--text)}
   <div class="card">
     <div class="section-title"><h2>累计高频错词</h2></div>
     <div id="topErrors" class="chips"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>生词本</h2>
+      <div class="small">点击原文中的单词后可以加入这里</div>
+    </div>
+    <div id="vocabulary">正在读取…</div>
   </div>
 
   <div class="card">
@@ -178,6 +195,52 @@ function renderReport(data) {
   renderChips("todayErrorsList", data.today_top_errors || []);
 }
 
+function renderVocabulary(items) {
+  const host = document.getElementById("vocabulary");
+  host.textContent = "";
+
+  if (!items || !items.length) {
+    host.innerHTML = '<div class="empty">生词本还是空的。</div>';
+    return;
+  }
+
+  items.forEach(function(item) {
+    const row = document.createElement("div");
+    row.className = "vocab-item";
+
+    const top = document.createElement("div");
+    top.className = "vocab-top";
+
+    const word = document.createElement("span");
+    word.className = "vocab-word";
+    word.textContent = item.word;
+
+    const meaning = document.createElement("span");
+    meaning.className = "vocab-meaning";
+    meaning.textContent = item.translation;
+
+    top.appendChild(word);
+    top.appendChild(meaning);
+
+    const context = document.createElement("div");
+    context.className = "vocab-context";
+    context.textContent = item.context_sentence || "";
+
+    const meta = document.createElement("div");
+    meta.className = "vocab-meta";
+    meta.textContent =
+      "加入 " + String(item.added_count || 1) + " 次 · " +
+      localDate(item.updated_at);
+
+    row.appendChild(top);
+    if (item.context_sentence) {
+      row.appendChild(context);
+    }
+    row.appendChild(meta);
+    host.appendChild(row);
+  });
+}
+
 function renderSessions(sessions) {
   const host = document.getElementById("sessions");
   host.textContent = "";
@@ -249,21 +312,26 @@ function renderSessions(sessions) {
 
 async function load() {
   try {
-    const [reportResponse, historyResponse] = await Promise.all([
+    const [reportResponse, historyResponse, vocabularyResponse] = await Promise.all([
       fetch("/api/report"),
-      fetch("/api/history?limit=100")
+      fetch("/api/history?limit=100"),
+      fetch("/api/vocabulary?limit=200")
     ]);
 
     const report = await reportResponse.json();
     const history = await historyResponse.json();
+    const vocabulary = await vocabularyResponse.json();
 
     if (!report.ok) throw new Error(report.error || "报告读取失败");
     if (!history.ok) throw new Error(history.error || "历史记录读取失败");
+    if (!vocabulary.ok) throw new Error(vocabulary.error || "生词本读取失败");
 
     renderReport(report);
+    renderVocabulary(vocabulary.items || []);
     renderSessions(history.sessions || []);
   } catch (error) {
     document.getElementById("dailyReport").textContent = String(error.message || error);
+    document.getElementById("vocabulary").textContent = String(error.message || error);
     document.getElementById("sessions").textContent = String(error.message || error);
   }
 }
