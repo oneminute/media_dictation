@@ -550,6 +550,22 @@ function checkCurrent() {
   focusAnswer();
 }
 
+function renderTranslation(translation, model) {
+  const box = document.getElementById("translation");
+  box.textContent = "";
+
+  const textNode = document.createElement("span");
+  textNode.textContent = translation;
+
+  const meta = document.createElement("span");
+  meta.className = "translation-meta";
+  meta.textContent = model;
+
+  box.appendChild(textNode);
+  box.appendChild(meta);
+  box.classList.add("visible");
+}
+
 async function translateCurrent() {
   if (!items.length) {
     return;
@@ -561,12 +577,7 @@ async function translateCurrent() {
 
   if (translationCache.has(source)) {
     const cached = translationCache.get(source);
-    box.innerHTML =
-      cached.translation +
-      '<span class="translation-meta">' +
-      cached.model +
-      "</span>";
-    box.classList.add("visible");
+    renderTranslation(cached.translation, cached.model);
     return;
   }
 
@@ -592,11 +603,7 @@ async function translateCurrent() {
       model: data.model
     });
 
-    box.innerHTML =
-      data.translation +
-      '<span class="translation-meta">' +
-      data.model +
-      "</span>";
+    renderTranslation(data.translation, data.model);
   } catch (error) {
     box.textContent = String(error.message || error);
   } finally {
