@@ -149,15 +149,23 @@ The API key stays in the Flask backend and is never sent to browser JavaScript.
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_TRANSLATION_MODEL=gpt-4o-mini
-OPENAI_TRANSLATION_TIMEOUT_SECONDS=15
+
+# Full-sentence translation: cheaper Flex processing
+OPENAI_TRANSLATION_MODEL=gpt-5.6-luna
+OPENAI_TRANSLATION_SERVICE_TIER=flex
+OPENAI_TRANSLATION_TIMEOUT_SECONDS=45
+
+# Clickable word lookup: normal real-time/default processing
+OPENAI_WORD_MODEL=gpt-5.6-luna
+OPENAI_WORD_SERVICE_TIER=default
+OPENAI_WORD_TIMEOUT_SECONDS=15
 ```
 
 3. Restart the app.
 
-The default translation model is `gpt-4o-mini`, which is inexpensive and sufficient for short English-to-Chinese sentence translation. You can change `OPENAI_TRANSLATION_MODEL` without changing code.
+By default, full-sentence translation uses `gpt-5.6-luna` with `service_tier=flex` and reasoning disabled (`effort=none`) to reduce cost. Clickable word lookup also uses `gpt-5.6-luna`, but stays on the normal `default` service tier for faster interaction.
 
-The app uses the OpenAI **Responses API**. Translation requests fail fast instead of hanging indefinitely: the backend timeout defaults to 15 seconds and the browser aborts after 20 seconds. If translation appears stuck, update dependencies with `python -m pip install -U -r requirements.txt` and check the visible error message. A Codex model can technically be selected by changing the model environment variable if your API project has access, but Codex is optimized for coding and is not recommended for routine sentence translation.
+The app uses the OpenAI **Responses API**. Full-sentence Flex translation has a 45-second backend timeout and a 55-second browser timeout. Word lookup keeps a shorter 15-second backend timeout and 20-second browser timeout. If translation appears stuck, update dependencies with `python -m pip install -U -r requirements.txt` and check the visible error message. A Codex model can technically be selected by changing the model environment variable if your API project has access, but Codex is optimized for coding and is not recommended for routine sentence translation.
 
 You can verify whether translation is configured:
 
@@ -170,7 +178,12 @@ Look for:
 ```json
 {
   "translation_enabled": true,
-  "translation_model": "gpt-4o-mini"
+  "translation_model": "gpt-5.6-luna",
+  "translation_service_tier": "flex",
+  "translation_timeout_seconds": 45,
+  "word_model": "gpt-5.6-luna",
+  "word_service_tier": "default",
+  "word_timeout_seconds": 15
 }
 ```
 
