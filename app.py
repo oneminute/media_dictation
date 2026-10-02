@@ -7,7 +7,16 @@ from urllib.parse import parse_qs, urlparse
 
 from flask import Flask, jsonify, request, send_from_directory
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    OpenAI,
+    PermissionDeniedError,
+    RateLimitError,
+)
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
@@ -499,33 +508,78 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
     return segments
 
 
+def openai_timeout_seconds() -> float:
+    raw = os.getenv("OPENAI_TRANSLATION_TIMEOUT_SECONDS", "15").strip()
+    try:
+        return max(3.0, min(float(raw), 60.0))
+    except ValueError:
+        return 15.0
+
+
 def translate_to_chinese(text: str) -> tuple[str, str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "OpenAI translation is not configured. Set OPENAI_API_KEY in .env "
-            "or in your environment."
+            "未配置 OPENAI_API_KEY。请在项目根目录 .env 中设置 API key。"
         )
 
     model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini").strip()
     if not model:
         model = "gpt-4o-mini"
 
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
-        model=model,
-        instructions=(
-            "Translate the supplied English sentence into natural Simplified Chinese. "
-            "Preserve the meaning and tone. Return only the Chinese translation, "
-            "with no labels, notes, alternatives, or quotation marks."
-        ),
-        input=text,
-        max_output_tokens=200,
+    timeout = openai_timeout_seconds()
+
+    # The OpenAI SDK defaults to a very long timeout and automatic retries.
+    # For an interactive dictation tool, fail fast and show a useful message.
+    client = OpenAI(
+        api_key=api_key,
+        timeout=timeout,
+        max_retries=0,
     )
+
+    try:
+        response = client.responses.create(
+            model=model,
+            instructions=(
+                "Translate the supplied English sentence into natural Simplified Chinese. "
+                "Preserve the meaning and tone. Return only the Chinese translation, "
+                "with no labels, notes, alternatives, or quotation marks."
+            ),
+            input=text,
+            max_output_tokens=200,
+        )
+    except AuthenticationError as exc:
+        raise RuntimeError(
+            "OpenAI API key 无效或未被当前项目接受。请检查 .env 中的 OPENAI_API_KEY。"
+        ) from exc
+    except PermissionDeniedError as exc:
+        raise RuntimeError(
+            f"当前 API 项目没有权限使用模型 {model}。请更换模型或检查项目权限。"
+        ) from exc
+    except NotFoundError as exc:
+        raise RuntimeError(
+            f"找不到模型 {model}，或当前 API 项目无权访问该模型。"
+        ) from exc
+    except RateLimitError as exc:
+        raise RuntimeError(
+            "OpenAI API 返回限流/额度错误。请检查 API 项目的余额、预算或速率限制。"
+        ) from exc
+    except APITimeoutError as exc:
+        raise RuntimeError(
+            f"连接 OpenAI API 超时（{timeout:g} 秒）。请检查本机网络、代理或防火墙。"
+        ) from exc
+    except APIConnectionError as exc:
+        raise RuntimeError(
+            "无法连接 OpenAI API。请检查本机网络、代理、防火墙或 DNS。"
+        ) from exc
+    except BadRequestError as exc:
+        raise RuntimeError(
+            f"OpenAI API 拒绝了请求：{exc}"
+        ) from exc
 
     translation = (response.output_text or "").strip()
     if not translation:
-        raise RuntimeError("OpenAI returned an empty translation.")
+        raise RuntimeError("OpenAI API 返回了空翻译。")
 
     return translation, model
 
@@ -592,6 +646,7 @@ def health():
                 "OPENAI_TRANSLATION_MODEL",
                 "gpt-4o-mini",
             ),
+            "translation_timeout_seconds": openai_timeout_seconds(),
         }
     )
 
