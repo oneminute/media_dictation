@@ -1,4 +1,4 @@
 Flask>=3.0,<4
 youtube-transcript-api>=1.2,<2
-openai>=1.0
+openai>=1.66
 python-dotenv>=1.0
