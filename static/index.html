@@ -339,15 +339,26 @@ function toggleOriginal() {
 
 function tokenizeWithOffsets(text) {
   const tokens = [];
-  const regex = /[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)*/g;
+  const regex = /\S+/gu;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
+    const raw = match[0];
+    const value = raw
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "");
+
+    // Ignore punctuation-only chunks completely.
+    if (!value) {
+      continue;
+    }
+
     tokens.push({
-      raw: match[0],
-      value: match[0].toLowerCase().replace(/’/g, "'"),
+      raw: raw,
+      value: value,
       start: match.index,
-      end: match.index + match[0].length
+      end: match.index + raw.length
     });
   }
 
