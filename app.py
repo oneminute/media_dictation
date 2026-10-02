@@ -512,12 +512,27 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
     return segments
 
 
-def openai_timeout_seconds() -> float:
-    raw = os.getenv("OPENAI_TRANSLATION_TIMEOUT_SECONDS", "15").strip()
+def openai_timeout_seconds(
+    env_name: str = "OPENAI_TRANSLATION_TIMEOUT_SECONDS",
+    default: float = 15.0,
+) -> float:
+    raw = os.getenv(env_name, str(default)).strip()
     try:
-        return max(3.0, min(float(raw), 60.0))
+        return max(3.0, min(float(raw), 120.0))
     except ValueError:
-        return 15.0
+        return default
+
+
+def openai_service_tier(env_name: str, default: str) -> str:
+    value = os.getenv(env_name, default).strip().lower()
+    return value or default
+
+
+def reasoning_kwargs(model: str) -> dict:
+    # GPT-5.x supports disabling reasoning for simple translation/lookups.
+    if model.lower().startswith("gpt-5"):
+        return {"reasoning": {"effort": "none"}}
+    return {}
 
 
 def translate_to_chinese(text: str) -> tuple[str, str]:
@@ -527,11 +542,18 @@ def translate_to_chinese(text: str) -> tuple[str, str]:
             "未配置 OPENAI_API_KEY。请在项目根目录 .env 中设置 API key。"
         )
 
-    model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini").strip()
+    model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-5.6-luna").strip()
     if not model:
-        model = "gpt-4o-mini"
+        model = "gpt-5.6-luna"
 
-    timeout = openai_timeout_seconds()
+    service_tier = openai_service_tier(
+        "OPENAI_TRANSLATION_SERVICE_TIER",
+        "flex",
+    )
+    timeout = openai_timeout_seconds(
+        "OPENAI_TRANSLATION_TIMEOUT_SECONDS",
+        45.0,
+    )
 
     # The OpenAI SDK defaults to a very long timeout and automatic retries.
     # For an interactive dictation tool, fail fast and show a useful message.
@@ -551,6 +573,8 @@ def translate_to_chinese(text: str) -> tuple[str, str]:
             ),
             input=text,
             max_output_tokens=200,
+            service_tier=service_tier,
+            **reasoning_kwargs(model),
         )
     except AuthenticationError as exc:
         raise RuntimeError(
@@ -602,11 +626,18 @@ def translate_word_in_context(
             "未配置 OPENAI_API_KEY。请在项目根目录 .env 中设置 API key。"
         )
 
-    model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini").strip()
+    model = os.getenv("OPENAI_WORD_MODEL", "gpt-5.6-luna").strip()
     if not model:
-        model = "gpt-4o-mini"
+        model = "gpt-5.6-luna"
 
-    timeout = openai_timeout_seconds()
+    service_tier = openai_service_tier(
+        "OPENAI_WORD_SERVICE_TIER",
+        "default",
+    )
+    timeout = openai_timeout_seconds(
+        "OPENAI_WORD_TIMEOUT_SECONDS",
+        15.0,
+    )
     client = OpenAI(
         api_key=api_key,
         timeout=timeout,
@@ -627,6 +658,8 @@ def translate_word_in_context(
             model=model,
             input=prompt,
             max_output_tokens=80,
+            service_tier=service_tier,
+            **reasoning_kwargs(model),
         )
     except AuthenticationError as exc:
         raise RuntimeError(
@@ -722,9 +755,28 @@ def health():
             "translation_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
             "translation_model": os.getenv(
                 "OPENAI_TRANSLATION_MODEL",
-                "gpt-4o-mini",
+                "gpt-5.6-luna",
             ),
-            "translation_timeout_seconds": openai_timeout_seconds(),
+            "translation_service_tier": openai_service_tier(
+                "OPENAI_TRANSLATION_SERVICE_TIER",
+                "flex",
+            ),
+            "translation_timeout_seconds": openai_timeout_seconds(
+                "OPENAI_TRANSLATION_TIMEOUT_SECONDS",
+                45.0,
+            ),
+            "word_model": os.getenv(
+                "OPENAI_WORD_MODEL",
+                "gpt-5.6-luna",
+            ),
+            "word_service_tier": openai_service_tier(
+                "OPENAI_WORD_SERVICE_TIER",
+                "default",
+            ),
+            "word_timeout_seconds": openai_timeout_seconds(
+                "OPENAI_WORD_TIMEOUT_SECONDS",
+                15.0,
+            ),
         }
     )
 
