@@ -6,8 +6,12 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 from flask import Flask, jsonify, request, send_from_directory
+from dotenv import load_dotenv
+from openai import OpenAI
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
+
+load_dotenv()
 
 app = Flask(__name__, static_folder="static")
 
@@ -482,6 +486,37 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
     return segments
 
 
+def translate_to_chinese(text: str) -> tuple[str, str]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "OpenAI translation is not configured. Set OPENAI_API_KEY in .env "
+            "or in your environment."
+        )
+
+    model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini").strip()
+    if not model:
+        model = "gpt-4o-mini"
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        instructions=(
+            "Translate the supplied English sentence into natural Simplified Chinese. "
+            "Preserve the meaning and tone. Return only the Chinese translation, "
+            "with no labels, notes, alternatives, or quotation marks."
+        ),
+        input=text,
+        max_output_tokens=200,
+    )
+
+    translation = (response.output_text or "").strip()
+    if not translation:
+        raise RuntimeError("OpenAI returned an empty translation.")
+
+    return translation, model
+
+
 def fetch_best_transcript(video_id: str):
     api, proxy_mode = build_youtube_api()
     transcript_list = api.list(video_id)
@@ -529,7 +564,49 @@ def index():
 @app.get("/api/health")
 def health():
     _, proxy_mode = build_youtube_api()
-    return jsonify({"ok": True, "proxy_mode": proxy_mode})
+    return jsonify(
+        {
+            "ok": True,
+            "proxy_mode": proxy_mode,
+            "translation_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+            "translation_model": os.getenv(
+                "OPENAI_TRANSLATION_MODEL",
+                "gpt-4o-mini",
+            ),
+        }
+    )
+
+
+@app.post("/api/translate")
+def translate():
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text", "")).strip()
+
+    if not text:
+        return jsonify({"ok": False, "error": "没有可翻译的英文句子。"}), 400
+
+    if len(text) > 2000:
+        return jsonify({"ok": False, "error": "当前句子过长，无法翻译。"}), 400
+
+    try:
+        translation, model = translate_to_chinese(text)
+        return jsonify(
+            {
+                "ok": True,
+                "translation": translation,
+                "model": model,
+            }
+        )
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": f"翻译失败：{exc}",
+                }
+            ),
+            500,
+        )
 
 
 @app.get("/api/transcript")
