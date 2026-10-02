@@ -650,13 +650,23 @@ async function translateCurrent() {
   box.textContent = "正在生成中文翻译…";
   box.classList.add("visible");
 
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(function () {
+    controller.abort();
+  }, 20000);
+
   try {
     const response = await fetch("/api/translate", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({text: source})
+      body: JSON.stringify({text: source}),
+      signal: controller.signal
     });
-    const data = await response.json();
+
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await response.json()
+      : {ok: false, error: await response.text()};
 
     if (!response.ok || !data.ok) {
       throw new Error(data.error || "翻译失败。");
@@ -669,8 +679,14 @@ async function translateCurrent() {
 
     renderTranslation(data.translation, data.model);
   } catch (error) {
-    box.textContent = String(error.message || error);
+    if (error && error.name === "AbortError") {
+      box.textContent =
+        "翻译请求超过 20 秒仍未完成。请检查 OpenAI API key、网络、代理或模型权限。";
+    } else {
+      box.textContent = String(error.message || error);
+    }
   } finally {
+    window.clearTimeout(timeoutId);
     button.disabled = false;
     button.textContent = "中文翻译";
   }
