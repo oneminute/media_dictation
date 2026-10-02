@@ -10,7 +10,7 @@ if %errorlevel%==0 (
 )
 
 echo Installing/checking required packages...
-%PY% -m pip install -r requirements.txt
+%PY% -m pip install -U -r requirements.txt
 if errorlevel 1 (
   echo.
   echo Failed to install Python dependencies.
