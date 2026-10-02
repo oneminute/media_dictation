@@ -126,13 +126,14 @@ The API key stays in the Flask backend and is never sent to browser JavaScript.
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_TRANSLATION_MODEL=gpt-4o-mini
+OPENAI_TRANSLATION_TIMEOUT_SECONDS=15
 ```
 
 3. Restart the app.
 
 The default translation model is `gpt-4o-mini`, which is inexpensive and sufficient for short English-to-Chinese sentence translation. You can change `OPENAI_TRANSLATION_MODEL` without changing code.
 
-The app uses the OpenAI **Responses API**. A Codex model can technically be selected by changing the model environment variable if your API project has access, but Codex is optimized for coding and is not recommended for routine sentence translation.
+The app uses the OpenAI **Responses API**. Translation requests fail fast instead of hanging indefinitely: the backend timeout defaults to 15 seconds and the browser aborts after 20 seconds. If translation appears stuck, update dependencies with `python -m pip install -U -r requirements.txt` and check the visible error message. A Codex model can technically be selected by changing the model environment variable if your API project has access, but Codex is optimized for coding and is not recommended for routine sentence translation.
 
 You can verify whether translation is configured:
 
