@@ -609,7 +609,8 @@ def translate_to_chinese(text: str) -> tuple[str, str]:
     if not translation:
         raise RuntimeError("OpenAI API 返回了空翻译。")
 
-    return translation, model
+    actual_tier = getattr(response, "service_tier", None) or service_tier
+    return translation, model, actual_tier
 
 
 def normalize_lookup_word(word: str) -> str:
@@ -692,7 +693,8 @@ def translate_word_in_context(
     if not translation:
         raise RuntimeError("OpenAI API 返回了空的单词释义。")
 
-    return translation, model
+    actual_tier = getattr(response, "service_tier", None) or service_tier
+    return translation, model, actual_tier
 
 
 def fetch_best_transcript(video_id: str):
@@ -907,12 +909,16 @@ def word_lookup():
                 "normalized_word": normalized_word,
                 "translation": cached["translation"],
                 "model": cached["model"],
+                "service_tier": openai_service_tier(
+                    "OPENAI_WORD_SERVICE_TIER",
+                    "default",
+                ),
                 "cached": True,
             }
         )
 
     try:
-        translation, model = translate_word_in_context(
+        translation, model, actual_tier = translate_word_in_context(
             display_word,
             context_sentence,
         )
@@ -930,6 +936,7 @@ def word_lookup():
                 "normalized_word": normalized_word,
                 "translation": translation,
                 "model": model,
+                "service_tier": actual_tier,
                 "cached": False,
             }
         )
@@ -1002,11 +1009,15 @@ def translate():
                     "ok": True,
                     "translation": cached["translation"],
                     "model": cached["model"],
+                    "service_tier": openai_service_tier(
+                        "OPENAI_TRANSLATION_SERVICE_TIER",
+                        "flex",
+                    ),
                     "cached": True,
                 }
             )
 
-        translation, model = translate_to_chinese(text)
+        translation, model, actual_tier = translate_to_chinese(text)
         save_translation(
             source_text=text,
             translation=translation,
@@ -1018,6 +1029,7 @@ def translate():
                 "ok": True,
                 "translation": translation,
                 "model": model,
+                "service_tier": actual_tier,
                 "cached": False,
             }
         )
