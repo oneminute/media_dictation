@@ -13,6 +13,9 @@ from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConf
 
 from storage import (
     create_session,
+    get_learning_report,
+    get_session_detail,
+    get_session_history,
     get_stats,
     get_translation,
     init_db,
@@ -658,6 +661,35 @@ def save_attempt():
 @app.get("/api/stats")
 def stats():
     return jsonify({"ok": True, **get_stats()})
+
+
+@app.get("/api/history")
+def history():
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except ValueError:
+        limit = 50
+
+    return jsonify(
+        {
+            "ok": True,
+            "sessions": get_session_history(limit=limit),
+        }
+    )
+
+
+@app.get("/api/session/<int:session_id>")
+def session_detail(session_id: int):
+    result = get_session_detail(session_id)
+    if result is None:
+        return jsonify({"ok": False, "error": "没有找到这条练习记录。"}), 404
+
+    return jsonify({"ok": True, "session": result})
+
+
+@app.get("/api/report")
+def report():
+    return jsonify({"ok": True, **get_learning_report()})
 
 
 @app.post("/api/translate")
