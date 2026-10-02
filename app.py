@@ -11,9 +11,19 @@ from openai import OpenAI
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
+from storage import (
+    create_session,
+    get_stats,
+    get_translation,
+    init_db,
+    record_attempt,
+    save_translation,
+)
+
 load_dotenv()
 
 app = Flask(__name__, static_folder="static")
+init_db()
 
 NON_SPEECH_CUES = (
     "music",
@@ -568,6 +578,7 @@ def health():
         {
             "ok": True,
             "proxy_mode": proxy_mode,
+            "sqlite_enabled": True,
             "translation_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
             "translation_model": os.getenv(
                 "OPENAI_TRANSLATION_MODEL",
@@ -575,6 +586,78 @@ def health():
             ),
         }
     )
+
+
+@app.post("/api/session")
+def start_session():
+    payload = request.get_json(silent=True) or {}
+
+    video_id = str(payload.get("video_id", "")).strip()
+    source_url = str(payload.get("source_url", "")).strip()
+    language = str(payload.get("language", "")).strip()
+    total_items = payload.get("total_items", 0)
+
+    if not video_id or not source_url:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "缺少 video_id 或 source_url。",
+                }
+            ),
+            400,
+        )
+
+    try:
+        session_id = create_session(
+            video_id=video_id,
+            source_url=source_url,
+            language=language,
+            is_generated=bool(payload.get("is_generated", False)),
+            total_items=int(total_items or 0),
+        )
+        return jsonify({"ok": True, "session_id": session_id})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"创建练习记录失败：{exc}"}), 500
+
+
+@app.post("/api/attempt")
+def save_attempt():
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        session_id = int(payload.get("session_id"))
+        sentence_index = int(payload.get("sentence_index", 0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "无效的 session_id。"}), 400
+
+    sentence_text = str(payload.get("sentence_text", "")).strip()
+    answer_before = str(payload.get("answer_before", ""))
+    event_type = str(payload.get("event_type", "")).strip()
+    wrong_word = payload.get("wrong_word")
+    correct_word = payload.get("correct_word")
+
+    if not sentence_text:
+        return jsonify({"ok": False, "error": "缺少 sentence_text。"}), 400
+
+    try:
+        record_attempt(
+            session_id=session_id,
+            sentence_index=sentence_index,
+            sentence_text=sentence_text,
+            answer_before=answer_before,
+            event_type=event_type,
+            wrong_word=str(wrong_word) if wrong_word is not None else None,
+            correct_word=str(correct_word) if correct_word is not None else None,
+        )
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"保存听写记录失败：{exc}"}), 500
+
+
+@app.get("/api/stats")
+def stats():
+    return jsonify({"ok": True, **get_stats()})
 
 
 @app.post("/api/translate")
@@ -589,12 +672,30 @@ def translate():
         return jsonify({"ok": False, "error": "当前句子过长，无法翻译。"}), 400
 
     try:
+        cached = get_translation(text)
+        if cached is not None:
+            return jsonify(
+                {
+                    "ok": True,
+                    "translation": cached["translation"],
+                    "model": cached["model"],
+                    "cached": True,
+                }
+            )
+
         translation, model = translate_to_chinese(text)
+        save_translation(
+            source_text=text,
+            translation=translation,
+            model=model,
+        )
+
         return jsonify(
             {
                 "ok": True,
                 "translation": translation,
                 "model": model,
+                "cached": False,
             }
         )
     except Exception as exc:
