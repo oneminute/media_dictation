@@ -228,6 +228,7 @@ let items = [];
 let index = 0;
 let reveal = false;
 let videoId = "";
+let sessionId = null;
 let stopTimer = null;
 const translationCache = new Map();
 
@@ -530,21 +531,63 @@ function applyFirstCorrection(edit) {
   document.getElementById("feedback").innerHTML = message;
 }
 
+async function logAttempt(eventType, answerBefore, edit) {
+  if (!sessionId || !items.length) {
+    return;
+  }
+
+  let wrongWord = null;
+  let correctWord = null;
+
+  if (edit) {
+    if (edit.type === "replace") {
+      wrongWord = edit.actual ? edit.actual.raw : null;
+      correctWord = edit.expected ? edit.expected.raw : null;
+    } else if (edit.type === "missing") {
+      correctWord = edit.expected ? edit.expected.raw : null;
+    } else if (edit.type === "extra") {
+      wrongWord = edit.actual ? edit.actual.raw : null;
+    }
+  }
+
+  try {
+    await fetch("/api/attempt", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        session_id: sessionId,
+        sentence_index: index,
+        sentence_text: items[index].text,
+        answer_before: answerBefore,
+        event_type: eventType,
+        wrong_word: wrongWord,
+        correct_word: correctWord
+      })
+    });
+  } catch (error) {
+    console.warn("Practice logging failed:", error);
+  }
+}
+
 function checkCurrent() {
   if (!items.length) {
     return;
   }
 
+  const answer = document.getElementById("answer");
+  const answerBefore = answer.value;
   const edit = firstEdit(
-    document.getElementById("answer").value,
+    answerBefore,
     items[index].text
   );
 
   if (edit) {
+    void logAttempt(edit.type, answerBefore, edit);
     applyFirstCorrection(edit);
     return;
   }
 
+  void logAttempt("correct", answerBefore, null);
   document.getElementById("feedback").innerHTML =
     '<span class="ok">✓ 全部正确</span>';
   focusAnswer();
@@ -612,6 +655,33 @@ async function translateCurrent() {
   }
 }
 
+async function startPracticeSession(sourceUrl, transcriptData) {
+  sessionId = null;
+
+  try {
+    const response = await fetch("/api/session", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        video_id: transcriptData.video_id,
+        source_url: sourceUrl,
+        language: transcriptData.language || transcriptData.language_code || "",
+        is_generated: Boolean(transcriptData.is_generated),
+        total_items: (transcriptData.items || []).length
+      })
+    });
+
+    const data = await response.json();
+    if (response.ok && data.ok) {
+      sessionId = data.session_id;
+    } else {
+      console.warn("Could not create practice session:", data.error || data);
+    }
+  } catch (error) {
+    console.warn("Could not create practice session:", error);
+  }
+}
+
 async function loadVideo() {
   const url = document.getElementById("url").value.trim();
   const status = document.getElementById("status");
@@ -650,6 +720,7 @@ async function loadVideo() {
     status.textContent =
       "已生成 " + String(items.length) + " 个听写句子。单按 Ctrl 开始/重播当前句。";
 
+    await startPracticeSession(url, data);
     resetForSentence();
 
     if (playerReady) {
