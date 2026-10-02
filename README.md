@@ -45,6 +45,36 @@ Answer checking ignores capitalization and all punctuation, including commas, pe
 
 Local execution normally needs no proxy because requests leave through your own Internet connection.
 
+## Windows LAN production mode
+
+To let another computer on the same home network use Media Dictation, use the production LAN launcher:
+
+```
+start_lan_windows.bat
+```
+
+The launcher:
+
+- installs/updates the required Python packages;
+- runs the Flask application behind **Waitress** instead of Flask's development server;
+- listens on `0.0.0.0:8765`;
+- prints the detected LAN URL, for example `http://192.168.1.25:8765`;
+- opens `http://127.0.0.1:8765` on the server computer.
+
+On the child's computer, open the printed LAN URL in a browser. Both computers must be connected to the same Wi-Fi or LAN.
+
+If Windows Defender Firewall prompts on the server computer, allow Python for **Private networks**. If there is no prompt but the other computer cannot connect, make sure the home network is marked Private and allow inbound TCP port `8765` for the Private profile.
+
+Security notes:
+
+- this LAN mode currently has no login/authentication;
+- use it only on a trusted home/private network;
+- do **not** configure router port forwarding for port `8765`;
+- the OpenAI API key remains only in the server computer's `.env` file and is never sent to the child's browser;
+- SQLite history remains on the server computer.
+
+Keep the launcher window open while the app is in use. Press `Ctrl+C` in that window to stop the server.
+
 ## Linux / macOS
 
 ```bash
