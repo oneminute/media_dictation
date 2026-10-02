@@ -14,7 +14,9 @@ A local web app for sentence-by-sentence YouTube dictation practice.
 - Detect substitutions, missing words, and extra words using sequence alignment.
 - A fully correct sentence stays on the current sentence instead of auto-advancing.
 - Optional on-demand Simplified Chinese translation through the OpenAI Responses API.
-- Lightweight local SQLite history for sessions, dictation attempts, errors, progress, and translation cache.
+- Click any word in the revealed source sentence to get a context-aware Chinese meaning.
+- Save looked-up words into a persistent SQLite vocabulary book with their source sentence.
+- Lightweight local SQLite history for sessions, dictation attempts, errors, progress, translations, word lookups, and vocabulary.
 - Learning Center at `/learning` with daily summary, overall report, frequent errors, performance estimate, practice history, and resume links.
 - Resume unfinished practice from the earliest sentence that has not yet been completed correctly.
 - Optional proxy support for cloud environments such as GitHub Codespaces.
@@ -75,12 +77,32 @@ The Learning Center shows:
 - cumulative completed sentences;
 - an internal listening-dictation performance score and label;
 - today's and cumulative frequent error words;
+- a vocabulary book containing saved words, contextual Chinese meanings, and source sentences;
 - recent practice sessions with progress and error counts;
 - a **继续练习** button for every unfinished session.
 
 Resume is based on the earliest sentence in that saved session that has not yet received a fully-correct Enter check. The SQLite file persists across days, so an unfinished practice can be continued later as long as `data/media_dictation.db` is kept.
 
 The performance estimate is intentionally **not labeled as CEFR**. The source material is not standardized for difficulty, so claiming A2/B1/B2 from ordinary podcast dictation data would be misleading. The current estimate uses first-pass accuracy, correction frequency, and sample size. A standardized placement test can be added later if CEFR estimation is desired.
+
+## Clickable words and vocabulary book
+
+After you reveal the source sentence, every word is clickable.
+
+Clicking a word:
+
+1. sends the word together with the current sentence to the local Flask backend;
+2. asks the configured low-cost OpenAI model for the word's concise Chinese meaning **in that sentence**;
+3. caches the result in SQLite so the same word in the same sentence does not call the API again;
+4. shows an **加入生词本** button.
+
+Saved words appear in the **生词本** section of:
+
+```
+http://127.0.0.1:8765/learning
+```
+
+The vocabulary entry stores the word, contextual Chinese meaning, source sentence, and source video information.
 
 ## Local SQLite data
 
@@ -97,6 +119,8 @@ The database intentionally stores only a small set of learning data:
 - `practice_sessions`: video ID, source URL, language, subtitle type, number of practice segments, current progress, and timestamps.
 - `attempts`: each Enter check, sentence index/text, the answer before correction, event type (`replace`, `missing`, `extra`, or `correct`), and the wrong/correct word when applicable.
 - `translations`: English source sentence, Chinese translation, model, and timestamps.
+- `word_translations`: cached context-aware word lookups, keyed by normalized word plus source sentence.
+- `vocabulary`: saved vocabulary words with Chinese meaning, source sentence, source video, and timestamps.
 
 Saved translations are reused across app restarts, so clicking **中文翻译** for a sentence that is already in SQLite does not call the OpenAI API again.
 
