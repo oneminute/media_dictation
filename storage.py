@@ -69,6 +69,33 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS word_translations (
+                normalized_word TEXT NOT NULL,
+                context_sentence TEXT NOT NULL,
+                display_word TEXT NOT NULL,
+                translation TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (normalized_word, context_sentence)
+            );
+
+            CREATE TABLE IF NOT EXISTS vocabulary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                normalized_word TEXT NOT NULL UNIQUE,
+                display_word TEXT NOT NULL,
+                translation TEXT NOT NULL,
+                context_sentence TEXT NOT NULL DEFAULT '',
+                video_id TEXT,
+                source_url TEXT,
+                added_count INTEGER NOT NULL DEFAULT 1,
+                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_vocabulary_updated
+                ON vocabulary(updated_at DESC);
             """
         )
 
@@ -610,3 +637,156 @@ def get_learning_report() -> dict[str, Any]:
             if row["word"]
         ],
     }
+
+
+def get_word_translation(
+    normalized_word: str,
+    context_sentence: str,
+) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT display_word, translation, model
+            FROM word_translations
+            WHERE normalized_word = ?
+              AND context_sentence = ?
+            """,
+            (normalized_word, context_sentence),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "word": row["display_word"],
+        "translation": row["translation"],
+        "model": row["model"],
+    }
+
+
+def save_word_translation(
+    *,
+    normalized_word: str,
+    display_word: str,
+    context_sentence: str,
+    translation: str,
+    model: str,
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO word_translations (
+                normalized_word,
+                context_sentence,
+                display_word,
+                translation,
+                model
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(normalized_word, context_sentence) DO UPDATE SET
+                display_word = excluded.display_word,
+                translation = excluded.translation,
+                model = excluded.model,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                normalized_word,
+                context_sentence,
+                display_word,
+                translation,
+                model,
+            ),
+        )
+
+
+def add_vocabulary_word(
+    *,
+    normalized_word: str,
+    display_word: str,
+    translation: str,
+    context_sentence: str,
+    video_id: str | None = None,
+    source_url: str | None = None,
+) -> dict[str, Any]:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO vocabulary (
+                normalized_word,
+                display_word,
+                translation,
+                context_sentence,
+                video_id,
+                source_url
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(normalized_word) DO UPDATE SET
+                display_word = excluded.display_word,
+                translation = excluded.translation,
+                context_sentence = excluded.context_sentence,
+                video_id = COALESCE(excluded.video_id, vocabulary.video_id),
+                source_url = COALESCE(excluded.source_url, vocabulary.source_url),
+                added_count = vocabulary.added_count + 1,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                normalized_word,
+                display_word,
+                translation,
+                context_sentence,
+                video_id,
+                source_url,
+            ),
+        )
+
+        row = conn.execute(
+            """
+            SELECT *
+            FROM vocabulary
+            WHERE normalized_word = ?
+            """,
+            (normalized_word,),
+        ).fetchone()
+
+    return dict(row)
+
+
+def get_vocabulary(limit: int = 200) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 500))
+
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                normalized_word,
+                display_word,
+                translation,
+                context_sentence,
+                video_id,
+                source_url,
+                added_count,
+                added_at,
+                updated_at
+            FROM vocabulary
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [
+        {
+            "id": int(row["id"]),
+            "word": row["display_word"],
+            "normalized_word": row["normalized_word"],
+            "translation": row["translation"],
+            "context_sentence": row["context_sentence"],
+            "video_id": row["video_id"],
+            "source_url": row["source_url"],
+            "added_count": int(row["added_count"] or 1),
+            "added_at": row["added_at"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
