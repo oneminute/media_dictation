@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Learning Center · Media Dictation</title>
+<style>
+:root{
+  --bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5e7eb;
+  --primary:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b42318;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:22px}
+.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
+h1{font-size:28px;margin:0}
+.sub{color:var(--muted);margin-top:5px}
+a.button{
+  display:inline-block;text-decoration:none;border-radius:10px;padding:10px 14px;
+  background:var(--primary);color:#fff;font-weight:650;
+}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:850px){.grid{grid-template-columns:repeat(2,1fr)}}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:18px;margin-bottom:16px;box-shadow:0 5px 18px rgba(0,0,0,.04);
+}
+.metric{font-size:28px;font-weight:750;margin-top:8px}
+.label{color:var(--muted);font-size:13px}
+.small{font-size:13px;color:var(--muted);line-height:1.55}
+.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.section-title h2{margin:0;font-size:20px}
+.assessment{display:grid;grid-template-columns:180px 1fr;gap:18px;align-items:center}
+@media(max-width:650px){.assessment{grid-template-columns:1fr}}
+.score{
+  display:flex;align-items:center;justify-content:center;width:150px;height:150px;
+  border-radius:50%;border:12px solid #dbeafe;font-size:32px;font-weight:800;
+}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:13px}
+.session{
+  display:grid;grid-template-columns:128px 1fr auto;gap:14px;align-items:center;
+  padding:14px 0;border-top:1px solid var(--line);
+}
+.session:first-child{border-top:0}
+@media(max-width:700px){.session{grid-template-columns:100px 1fr}.session-actions{grid-column:1/-1}}
+.thumb{width:128px;aspect-ratio:16/9;border-radius:9px;object-fit:cover;background:#111}
+@media(max-width:700px){.thumb{width:100px}}
+.session-title{font-weight:700;word-break:break-all}
+.progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:8px 0}
+.bar{height:100%;background:var(--primary)}
+.meta{color:var(--muted);font-size:13px}
+.status-ok{color:var(--ok);font-weight:700}
+.status-open{color:var(--warn);font-weight:700}
+.session-actions a{
+  text-decoration:none;display:inline-block;padding:9px 12px;border-radius:9px;
+  background:#e8efff;color:#1749b3;font-weight:700;white-space:nowrap;
+}
+.empty{padding:24px 0;color:var(--muted);text-align:center}
+.report{line-height:1.8}
+strong.value{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1>学习中心</h1>
+      <div class="sub">历史记录、当天总结、听写表现评估和断点续练</div>
+    </div>
+    <a class="button" href="/">返回听写</a>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="label">今天完成句子</div><div id="todayCompleted" class="metric">–</div></div>
+    <div class="card"><div class="label">今天错误次数</div><div id="todayErrors" class="metric">–</div></div>
+    <div class="card"><div class="label">今天首遍正确率</div><div id="todayAccuracy" class="metric">–</div></div>
+    <div class="card"><div class="label">累计完成句子</div><div id="overallCompleted" class="metric">–</div></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>当前听写表现</h2></div>
+    <div class="assessment">
+      <div id="scoreCircle" class="score">–</div>
+      <div>
+        <div id="assessmentLabel" style="font-size:22px;font-weight:750">正在计算…</div>
+        <div id="assessmentStats" class="report"></div>
+        <div id="assessmentNote" class="small" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>今日总结</h2></div>
+    <div id="dailyReport" class="report">正在读取…</div>
+    <div style="margin-top:14px">
+      <div class="label" style="margin-bottom:8px">今天最常出错</div>
+      <div id="todayErrorsList" class="chips"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>累计高频错词</h2></div>
+    <div id="topErrors" class="chips"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>练习目录</h2>
+      <div class="small">未完成项目可以随时继续</div>
+    </div>
+    <div id="sessions">正在读取…</div>
+  </div>
+</div>
+
+<script>
+function text(value, fallback) {
+  return value === null || value === undefined ? (fallback || "–") : String(value);
+}
+
+function pct(value) {
+  return value === null || value === undefined ? "–" : Number(value).toFixed(1) + "%";
+}
+
+function localDate(value) {
+  if (!value) return "";
+  const parsed = new Date(String(value).replace(" ", "T") + "Z");
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function renderChips(id, items) {
+  const host = document.getElementById(id);
+  host.textContent = "";
+  if (!items || !items.length) {
+    host.innerHTML = '<span class="small">暂无数据</span>';
+    return;
+  }
+
+  items.forEach(function(item) {
+    const span = document.createElement("span");
+    span.className = "chip";
+    span.textContent = item.word + " × " + item.count;
+    host.appendChild(span);
+  });
+}
+
+function renderReport(data) {
+  const today = data.today || {};
+  const overall = data.overall || {};
+  const assessment = data.assessment || {};
+
+  document.getElementById("todayCompleted").textContent = text(today.completed_sentences, "0");
+  document.getElementById("todayErrors").textContent = text(today.errors, "0");
+  document.getElementById("todayAccuracy").textContent = pct(today.first_pass_accuracy);
+  document.getElementById("overallCompleted").textContent = text(overall.completed_sentences, "0");
+
+  document.getElementById("scoreCircle").textContent =
+    assessment.score === null || assessment.score === undefined ? "–" : Math.round(assessment.score);
+  document.getElementById("assessmentLabel").textContent = assessment.label || "数据不足";
+  document.getElementById("assessmentNote").textContent = assessment.note || "";
+  document.getElementById("assessmentStats").innerHTML =
+    '累计首遍正确率：<strong class="value">' + pct(overall.first_pass_accuracy) + '</strong><br>' +
+    '每个已完成句子的平均错误次数：<strong class="value">' +
+    text(overall.errors_per_completed_sentence, "–") + '</strong><br>' +
+    '已尝试句子样本：<strong class="value">' + text(overall.attempted_sentences, "0") + '</strong>';
+
+  document.getElementById("dailyReport").innerHTML =
+    '今天共建立 <strong class="value">' + text(today.sessions, "0") + '</strong> 次练习，' +
+    '完成 <strong class="value">' + text(today.completed_sentences, "0") + '</strong> 个句子，' +
+    '记录 <strong class="value">' + text(today.errors, "0") + '</strong> 次纠错。' +
+    '首遍正确率为 <strong class="value">' + pct(today.first_pass_accuracy) + '</strong>。';
+
+  renderChips("topErrors", data.top_errors || []);
+  renderChips("todayErrorsList", data.today_top_errors || []);
+}
+
+function renderSessions(sessions) {
+  const host = document.getElementById("sessions");
+  host.textContent = "";
+
+  if (!sessions || !sessions.length) {
+    host.innerHTML = '<div class="empty">还没有练习记录。</div>';
+    return;
+  }
+
+  sessions.forEach(function(item) {
+    const row = document.createElement("div");
+    row.className = "session";
+
+    const img = document.createElement("img");
+    img.className = "thumb";
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = "https://img.youtube.com/vi/" + encodeURIComponent(item.video_id) + "/mqdefault.jpg";
+
+    const info = document.createElement("div");
+
+    const title = document.createElement("div");
+    title.className = "session-title";
+    title.textContent = item.video_id;
+
+    const progress = document.createElement("div");
+    progress.className = "progress";
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.style.width = Math.max(0, Math.min(100, Number(item.progress_percent || 0))) + "%";
+    progress.appendChild(bar);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent =
+      item.completed_sentences + " / " + item.total_items + " 句 · " +
+      item.error_count + " 次错误 · " + localDate(item.updated_at);
+
+    const status = document.createElement("div");
+    status.className = item.completed ? "status-ok" : "status-open";
+    status.textContent = item.completed ? "已完成" : "未完成";
+
+    info.appendChild(title);
+    info.appendChild(progress);
+    info.appendChild(meta);
+    info.appendChild(status);
+
+    const actions = document.createElement("div");
+    actions.className = "session-actions";
+
+    if (!item.completed) {
+      const link = document.createElement("a");
+      link.href = "/?resume=" + encodeURIComponent(item.id);
+      link.textContent = "继续练习";
+      actions.appendChild(link);
+    } else {
+      const span = document.createElement("span");
+      span.className = "small";
+      span.textContent = "完成";
+      actions.appendChild(span);
+    }
+
+    row.appendChild(img);
+    row.appendChild(info);
+    row.appendChild(actions);
+    host.appendChild(row);
+  });
+}
+
+async function load() {
+  try {
+    const [reportResponse, historyResponse] = await Promise.all([
+      fetch("/api/report"),
+      fetch("/api/history?limit=100")
+    ]);
+
+    const report = await reportResponse.json();
+    const history = await historyResponse.json();
+
+    if (!report.ok) throw new Error(report.error || "报告读取失败");
+    if (!history.ok) throw new Error(history.error || "历史记录读取失败");
+
+    renderReport(report);
+    renderSessions(history.sessions || []);
+  } catch (error) {
+    document.getElementById("dailyReport").textContent = String(error.message || error);
+    document.getElementById("sessions").textContent = String(error.message || error);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
