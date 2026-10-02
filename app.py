@@ -574,6 +574,11 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.get("/learning")
+def learning_center():
+    return send_from_directory("static", "learning.html")
+
+
 @app.get("/api/health")
 def health():
     _, proxy_mode = build_youtube_api()
