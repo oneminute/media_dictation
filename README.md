@@ -31,7 +31,7 @@ A local web app for sentence-by-sentence YouTube dictation practice.
 - **Ctrl+H:** show/hide the original sentence.
 - **Tab / Shift+Tab:** next / previous sentence.
 
-Answer checking ignores capitalization and punctuation. Apostrophes inside words are preserved.
+Answer checking ignores capitalization and all punctuation, including commas, periods, quotation marks, apostrophes, and hyphens. Only letters and numbers participate in comparison.
 
 ## Windows
 
