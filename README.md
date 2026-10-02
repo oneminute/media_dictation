@@ -14,6 +14,7 @@ A local web app for sentence-by-sentence YouTube dictation practice.
 - Detect substitutions, missing words, and extra words using sequence alignment.
 - A fully correct sentence stays on the current sentence instead of auto-advancing.
 - Optional on-demand Simplified Chinese translation through the OpenAI Responses API.
+- Lightweight local SQLite history for sessions, dictation attempts, errors, progress, and translation cache.
 - Optional proxy support for cloud environments such as GitHub Codespaces.
 
 ### Keyboard shortcuts
@@ -55,6 +56,38 @@ Then open `http://127.0.0.1:8765`.
 python -m pip install -r requirements.txt
 python app.py
 ```
+
+## Local SQLite data
+
+The app automatically creates:
+
+```
+data/media_dictation.db
+```
+
+No separate database installation is required; Python's built-in `sqlite3` module is used.
+
+The database intentionally stores only a small set of learning data:
+
+- `practice_sessions`: video ID, source URL, language, subtitle type, number of practice segments, current progress, and timestamps.
+- `attempts`: each Enter check, sentence index/text, the answer before correction, event type (`replace`, `missing`, `extra`, or `correct`), and the wrong/correct word when applicable.
+- `translations`: English source sentence, Chinese translation, model, and timestamps.
+
+Saved translations are reused across app restarts, so clicking **中文翻译** for a sentence that is already in SQLite does not call the OpenAI API again.
+
+The database is local and ignored by Git. To use a different location, set:
+
+```env
+MEDIA_DICTATION_DB=D:/somewhere/media_dictation.db
+```
+
+A small summary endpoint is available at:
+
+```
+http://127.0.0.1:8765/api/stats
+```
+
+It reports total sessions, completed sentences, recorded errors, and cached translations.
 
 ## Optional OpenAI Chinese translation
 
