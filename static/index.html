@@ -378,7 +378,9 @@ function renderWordLookup(data) {
   document.getElementById("wordTitle").textContent = data.word;
   document.getElementById("wordMeaning").textContent = data.translation;
   document.getElementById("wordMeta").textContent =
-    (data.cached ? "已缓存 · " : "") + (data.model || "");
+    (data.cached ? "已缓存 · " : "") +
+    (data.model || "") +
+    (data.service_tier ? " · " + data.service_tier : "");
   document.getElementById("wordStatus").textContent = "";
   document.getElementById("addVocab").disabled = false;
   document.getElementById("wordCard").classList.add("visible");
@@ -431,6 +433,7 @@ async function lookupWord(word) {
       normalized_word: data.normalized_word,
       translation: data.translation,
       model: data.model,
+      service_tier: data.service_tier,
       cached: Boolean(data.cached),
       context: context
     };
@@ -837,7 +840,7 @@ function checkCurrent() {
   focusAnswer();
 }
 
-function renderTranslation(translation, model) {
+function renderTranslation(translation, model, serviceTier) {
   const box = document.getElementById("translation");
   box.textContent = "";
 
@@ -846,7 +849,7 @@ function renderTranslation(translation, model) {
 
   const meta = document.createElement("span");
   meta.className = "translation-meta";
-  meta.textContent = model;
+  meta.textContent = model + (serviceTier ? " · " + serviceTier : "");
 
   box.appendChild(textNode);
   box.appendChild(meta);
@@ -864,7 +867,7 @@ async function translateCurrent() {
 
   if (translationCache.has(source)) {
     const cached = translationCache.get(source);
-    renderTranslation(cached.translation, cached.model);
+    renderTranslation(cached.translation, cached.model, cached.service_tier);
     return;
   }
 
@@ -897,10 +900,11 @@ async function translateCurrent() {
 
     translationCache.set(source, {
       translation: data.translation,
-      model: data.model
+      model: data.model,
+      service_tier: data.service_tier
     });
 
-    renderTranslation(data.translation, data.model);
+    renderTranslation(data.translation, data.model, data.service_tier);
   } catch (error) {
     if (error && error.name === "AbortError") {
       box.textContent =
