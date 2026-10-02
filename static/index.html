@@ -876,7 +876,7 @@ async function translateCurrent() {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(function () {
     controller.abort();
-  }, 20000);
+  }, 55000);
 
   try {
     const response = await fetch("/api/translate", {
@@ -904,7 +904,7 @@ async function translateCurrent() {
   } catch (error) {
     if (error && error.name === "AbortError") {
       box.textContent =
-        "翻译请求超过 20 秒仍未完成。请检查 OpenAI API key、网络、代理或模型权限。";
+        "Flex 翻译请求超过 55 秒仍未完成。请检查 OpenAI API key、网络、代理、模型权限或 Flex 可用性。";
     } else {
       box.textContent = String(error.message || error);
     }
