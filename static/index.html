@@ -105,7 +105,43 @@ button.warn{background:#fef3c7;color:#92400e}
 .hidden-text{
   filter:blur(7px);
   user-select:none;
+  pointer-events:none;
 }
+.sentence-text{display:inline;white-space:normal}
+.word-token{
+  display:inline;
+  padding:0;
+  border:0;
+  border-radius:4px;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  font-weight:inherit;
+  cursor:pointer;
+}
+.word-token:hover{
+  background:#dbeafe;
+  color:#1d4ed8;
+}
+.word-card{
+  display:none;
+  margin-top:12px;
+  padding:12px 14px;
+  border:1px solid #cbd5e1;
+  border-radius:12px;
+  background:#fff;
+}
+.word-card.visible{display:block}
+.word-card-head{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  align-items:flex-start;
+}
+.word-card-title{font-size:20px;font-weight:750}
+.word-card-meaning{font-size:18px;margin-top:5px}
+.word-card-meta{font-size:12px;color:var(--muted);margin-top:5px}
+.word-card button{white-space:nowrap}
 .status{margin-top:10px;font-size:14px;color:var(--muted)}
 .error{color:var(--bad);white-space:pre-wrap}
 .feedback{margin-top:10px;min-height:24px;font-size:15px}
@@ -189,6 +225,18 @@ button.warn{background:#fef3c7;color:#92400e}
 
       <div id="sentence" class="sentence hidden-text">请先粘贴 YouTube 链接</div>
 
+      <div id="wordCard" class="word-card">
+        <div class="word-card-head">
+          <div>
+            <div id="wordTitle" class="word-card-title"></div>
+            <div id="wordMeaning" class="word-card-meaning"></div>
+            <div id="wordMeta" class="word-card-meta"></div>
+          </div>
+          <button id="addVocab" class="good" disabled>加入生词本</button>
+        </div>
+        <div id="wordStatus" class="status"></div>
+      </div>
+
       <div class="row" style="margin-top:12px">
         <button id="play" class="primary">▶ 重播当前句</button>
         <button id="prev">← 上一句</button>
@@ -241,6 +289,8 @@ let videoId = "";
 let sessionId = null;
 let stopTimer = null;
 const translationCache = new Map();
+const wordLookupCache = new Map();
+let activeWordLookup = null;
 
 let ctrlDown = false;
 let ctrlUsedAsChord = false;
@@ -264,11 +314,179 @@ function updateUI() {
     formatTime(item.start) + "–" + formatTime(item.end || (item.start + item.duration));
 
   const sentence = document.getElementById("sentence");
-  sentence.textContent = item.text;
+  renderInteractiveSentence(item.text);
   sentence.classList.toggle("hidden-text", !reveal);
 
   document.getElementById("bar").style.width =
     (((index + 1) / items.length) * 100).toFixed(2) + "%";
+}
+
+function renderInteractiveSentence(text) {
+  const sentence = document.getElementById("sentence");
+  sentence.textContent = "";
+
+  const container = document.createElement("span");
+  container.className = "sentence-text";
+
+  const regex = /[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      container.appendChild(
+        document.createTextNode(text.slice(lastIndex, match.index))
+      );
+    }
+
+    const wordButton = document.createElement("button");
+    wordButton.type = "button";
+    wordButton.className = "word-token";
+    wordButton.textContent = match[0];
+    wordButton.title = "点击查看中文释义";
+    wordButton.addEventListener("click", function (event) {
+      event.stopPropagation();
+      void lookupWord(match[0]);
+    });
+
+    container.appendChild(wordButton);
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  sentence.appendChild(container);
+}
+
+function hideWordCard() {
+  activeWordLookup = null;
+  const card = document.getElementById("wordCard");
+  card.classList.remove("visible");
+  document.getElementById("wordTitle").textContent = "";
+  document.getElementById("wordMeaning").textContent = "";
+  document.getElementById("wordMeta").textContent = "";
+  document.getElementById("wordStatus").textContent = "";
+  document.getElementById("addVocab").disabled = true;
+}
+
+function renderWordLookup(data) {
+  activeWordLookup = data;
+
+  document.getElementById("wordTitle").textContent = data.word;
+  document.getElementById("wordMeaning").textContent = data.translation;
+  document.getElementById("wordMeta").textContent =
+    (data.cached ? "已缓存 · " : "") + (data.model || "");
+  document.getElementById("wordStatus").textContent = "";
+  document.getElementById("addVocab").disabled = false;
+  document.getElementById("wordCard").classList.add("visible");
+}
+
+async function lookupWord(word) {
+  if (!items.length || !reveal) {
+    return;
+  }
+
+  const context = items[index].text;
+  const cacheKey = word.toLowerCase() + "\n" + context;
+  const card = document.getElementById("wordCard");
+
+  card.classList.add("visible");
+  document.getElementById("wordTitle").textContent = word;
+  document.getElementById("wordMeaning").textContent = "正在查询…";
+  document.getElementById("wordMeta").textContent = "";
+  document.getElementById("wordStatus").textContent = "";
+  document.getElementById("addVocab").disabled = true;
+
+  if (wordLookupCache.has(cacheKey)) {
+    renderWordLookup(wordLookupCache.get(cacheKey));
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(function () {
+    controller.abort();
+  }, 20000);
+
+  try {
+    const response = await fetch("/api/word-lookup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        word: word,
+        context: context
+      }),
+      signal: controller.signal
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "单词查询失败。");
+    }
+
+    const lookup = {
+      word: word,
+      normalized_word: data.normalized_word,
+      translation: data.translation,
+      model: data.model,
+      cached: Boolean(data.cached),
+      context: context
+    };
+
+    wordLookupCache.set(cacheKey, lookup);
+    renderWordLookup(lookup);
+  } catch (error) {
+    activeWordLookup = null;
+    document.getElementById("wordMeaning").textContent = "";
+    document.getElementById("wordMeta").textContent = "";
+    document.getElementById("addVocab").disabled = true;
+
+    document.getElementById("wordStatus").textContent =
+      error && error.name === "AbortError"
+        ? "单词查询超过 20 秒仍未完成。请检查 OpenAI API 配置或网络。"
+        : String(error.message || error);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function addActiveWordToVocabulary() {
+  if (!activeWordLookup) {
+    return;
+  }
+
+  const button = document.getElementById("addVocab");
+  const status = document.getElementById("wordStatus");
+  button.disabled = true;
+  button.textContent = "保存中…";
+  status.textContent = "";
+
+  try {
+    const response = await fetch("/api/vocabulary", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        word: activeWordLookup.word,
+        translation: activeWordLookup.translation,
+        context: activeWordLookup.context,
+        video_id: videoId,
+        source_url: document.getElementById("url").value.trim()
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "加入生词本失败。");
+    }
+
+    status.textContent = "✓ 已加入生词本";
+    button.textContent = "已加入";
+  } catch (error) {
+    status.textContent = String(error.message || error);
+    button.disabled = false;
+    button.textContent = "加入生词本";
+  }
 }
 
 function focusAnswer() {
@@ -284,6 +502,7 @@ function resetForSentence() {
   const translation = document.getElementById("translation");
   translation.textContent = "";
   translation.classList.remove("visible");
+  hideWordCard();
   reveal = false;
   updateUI();
   focusAnswer();
@@ -334,6 +553,9 @@ function toggleOriginal() {
     return;
   }
   reveal = !reveal;
+  if (!reveal) {
+    hideWordCard();
+  }
   updateUI();
 }
 
@@ -826,6 +1048,7 @@ document.getElementById("next").addEventListener("click", function () {
 });
 document.getElementById("show").addEventListener("click", toggleOriginal);
 document.getElementById("translate").addEventListener("click", translateCurrent);
+document.getElementById("addVocab").addEventListener("click", addActiveWordToVocabulary);
 document.getElementById("check").addEventListener("click", checkCurrent);
 document.getElementById("clear").addEventListener("click", function () {
   document.getElementById("answer").value = "";
