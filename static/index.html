@@ -339,14 +339,15 @@ function renderInteractiveSentence(text) {
       );
     }
 
+    const clickedWord = match[0];
     const wordButton = document.createElement("button");
     wordButton.type = "button";
     wordButton.className = "word-token";
-    wordButton.textContent = match[0];
+    wordButton.textContent = clickedWord;
     wordButton.title = "点击查看中文释义";
     wordButton.addEventListener("click", function (event) {
       event.stopPropagation();
-      void lookupWord(match[0]);
+      void lookupWord(clickedWord);
     });
 
     container.appendChild(wordButton);
