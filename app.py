@@ -892,6 +892,22 @@ def translate_word_in_context(
             ) from cloud_exc
 
 
+def cached_service_tier(model: str, *, word: bool = False) -> str:
+    if str(model or "").startswith("ollama:"):
+        return "local"
+
+    if word:
+        return openai_service_tier(
+            "OPENAI_WORD_SERVICE_TIER",
+            "default",
+        )
+
+    return openai_service_tier(
+        "OPENAI_TRANSLATION_SERVICE_TIER",
+        "flex",
+    )
+
+
 def fetch_best_transcript(video_id: str):
     api, proxy_mode = build_youtube_api()
     transcript_list = api.list(video_id)
@@ -944,33 +960,59 @@ def learning_center():
 @app.get("/api/health")
 def health():
     _, proxy_mode = build_youtube_api()
+    provider = llm_provider()
+    local_ready = ollama_available()
+    openai_ready = bool(os.getenv("OPENAI_API_KEY", "").strip())
+
     return jsonify(
         {
             "ok": True,
             "proxy_mode": proxy_mode,
             "sqlite_enabled": True,
-            "translation_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
-            "translation_model": os.getenv(
+            "llm_provider": provider,
+            "translation_enabled": (
+                local_ready
+                if provider == "ollama"
+                else openai_ready
+                if provider == "openai"
+                else local_ready or openai_ready
+            ),
+            "ollama_available": local_ready,
+            "ollama_base_url": ollama_base_url(),
+            "ollama_translation_model": ollama_model(
+                "OLLAMA_TRANSLATION_MODEL"
+            ),
+            "ollama_translation_timeout_seconds": ollama_timeout_seconds(
+                "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
+                30.0,
+            ),
+            "ollama_word_model": ollama_model("OLLAMA_WORD_MODEL"),
+            "ollama_word_timeout_seconds": ollama_timeout_seconds(
+                "OLLAMA_WORD_TIMEOUT_SECONDS",
+                15.0,
+            ),
+            "openai_enabled": openai_ready,
+            "openai_translation_model": os.getenv(
                 "OPENAI_TRANSLATION_MODEL",
                 "gpt-5.6-luna",
             ),
-            "translation_service_tier": openai_service_tier(
+            "openai_translation_service_tier": openai_service_tier(
                 "OPENAI_TRANSLATION_SERVICE_TIER",
                 "flex",
             ),
-            "translation_timeout_seconds": openai_timeout_seconds(
+            "openai_translation_timeout_seconds": openai_timeout_seconds(
                 "OPENAI_TRANSLATION_TIMEOUT_SECONDS",
                 45.0,
             ),
-            "word_model": os.getenv(
+            "openai_word_model": os.getenv(
                 "OPENAI_WORD_MODEL",
                 "gpt-5.6-luna",
             ),
-            "word_service_tier": openai_service_tier(
+            "openai_word_service_tier": openai_service_tier(
                 "OPENAI_WORD_SERVICE_TIER",
                 "default",
             ),
-            "word_timeout_seconds": openai_timeout_seconds(
+            "openai_word_timeout_seconds": openai_timeout_seconds(
                 "OPENAI_WORD_TIMEOUT_SECONDS",
                 15.0,
             ),
@@ -1104,9 +1146,9 @@ def word_lookup():
                 "normalized_word": normalized_word,
                 "translation": cached["translation"],
                 "model": cached["model"],
-                "service_tier": openai_service_tier(
-                    "OPENAI_WORD_SERVICE_TIER",
-                    "default",
+                "service_tier": cached_service_tier(
+                    cached["model"],
+                    word=True,
                 ),
                 "cached": True,
             }
@@ -1204,9 +1246,9 @@ def translate():
                     "ok": True,
                     "translation": cached["translation"],
                     "model": cached["model"],
-                    "service_tier": openai_service_tier(
-                        "OPENAI_TRANSLATION_SERVICE_TIER",
-                        "flex",
+                    "service_tier": cached_service_tier(
+                        cached["model"],
+                        word=False,
                     ),
                     "cached": True,
                 }
