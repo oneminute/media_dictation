@@ -21,3 +21,5 @@ jobs:
         env:
           LLM_PROVIDER: ollama
         run: python -m unittest discover -s tests -v
+      - name: Check inline JavaScript
+        run: python tools/check_inline_js.py
