@@ -410,7 +410,7 @@ async function lookupWord(word) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(function () {
     controller.abort();
-  }, 20000);
+  }, 50000);
 
   try {
     const response = await fetch("/api/word-lookup", {
@@ -448,7 +448,7 @@ async function lookupWord(word) {
 
     document.getElementById("wordStatus").textContent =
       error && error.name === "AbortError"
-        ? "单词查询超过 20 秒仍未完成。请检查 OpenAI API 配置或网络。"
+        ? "单词查询超过 50 秒仍未完成。请检查本地 Ollama 是否运行、模型是否可用，或检查 OpenAI fallback 配置。"
         : String(error.message || error);
   } finally {
     window.clearTimeout(timeoutId);
@@ -879,7 +879,7 @@ async function translateCurrent() {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(function () {
     controller.abort();
-  }, 55000);
+  }, 70000);
 
   try {
     const response = await fetch("/api/translate", {
@@ -908,7 +908,7 @@ async function translateCurrent() {
   } catch (error) {
     if (error && error.name === "AbortError") {
       box.textContent =
-        "Flex 翻译请求超过 55 秒仍未完成。请检查 OpenAI API key、网络、代理、模型权限或 Flex 可用性。";
+        "翻译请求超过 70 秒仍未完成。请检查本地 Ollama 是否运行、模型是否可用，或检查 OpenAI fallback 配置。";
     } else {
       box.textContent = String(error.message || error);
     }
