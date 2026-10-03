@@ -45,6 +45,7 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
       <button id="exportData">导出数据</button>
       <a class="button" href="/review">错句复习</a>
       <a class="button" href="/">返回听写</a>
+      <a class="button" href="/logout">退出</a>
     </div>
   </div>
 
@@ -167,7 +168,8 @@ function renderSystemStatus(h){
     "默认 Provider：<b>"+String(h.llm_provider||"–")+"</b><br>"+
     "Ollama："+ollama+" · "+String(h.ollama_translation_model||"–")+"<br>"+
     "OpenAI："+openai+" · "+String(h.openai_translation_model||"–")+"<br>"+
-    "DB Schema：<b>v"+String(h.schema_version||"–")+"</b> · Segmentation：<b>"+String(h.segmentation_version||"–")+"</b>";
+    "DB Schema：<b>v"+String(h.schema_version||"–")+"</b> · Segmentation：<b>"+String(h.segmentation_version||"–")+"</b><br>"+
+    "家庭 PIN：<b>"+(h.pin_enabled?"已启用":"未启用")+"</b> · Whisper：<b>"+(h.whisper_available?"已安装":"未安装")+"</b>";
 }
 
 function renderReport(d){
