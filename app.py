@@ -72,6 +72,20 @@ app = Flask(__name__, static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = max_upload_bytes()
 init_db()
 
+
+@app.errorhandler(413)
+def too_large(_error):
+    return jsonify(
+        {
+            "ok": False,
+            "error": (
+                "上传文件过大。当前上限为 "
+                f"{max_upload_bytes() // (1024 * 1024)} MB。"
+            ),
+        }
+    ), 413
+
+
 def request_learner_id() -> int:
     raw = request.args.get("learner_id")
     if raw is None and request.is_json:
@@ -122,8 +136,11 @@ def transcribe_local_media():
         return jsonify({"ok": False, "error": "没有上传媒体文件。"}), 400
 
     file_storage = request.files["file"]
+    saved = None
     try:
         saved = persist_uploaded_media(file_storage)
+        result = transcribe_media(saved["path"])
+
         source = save_media_source(
             media_id=saved["id"],
             original_name=saved["original_name"],
@@ -134,7 +151,6 @@ def transcribe_local_media():
             learner_id=request.form.get("learner_id"),
         )
 
-        result = transcribe_media(saved["path"])
         return jsonify(
             {
                 "ok": True,
@@ -156,6 +172,11 @@ def transcribe_local_media():
             }
         )
     except Exception as exc:
+        if saved is not None:
+            try:
+                saved["path"].unlink(missing_ok=True)
+            except Exception:
+                pass
         return jsonify({"ok": False, "error": f"本地媒体转写失败：{exc}"}), 500
 
 
