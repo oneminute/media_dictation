@@ -3,74 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Learning Center · Media Dictation</title>
+<title>学习中心 · Media Dictation</title>
 <style>
-:root{
-  --bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5e7eb;
-  --primary:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b42318;
-}
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5e7eb;--primary:#2563eb;--ok:#15803d;--warn:#b45309}
 *{box-sizing:border-box}
-body{
-  margin:0;background:var(--bg);color:var(--text);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-}
-.wrap{max-width:1120px;margin:0 auto;padding:22px}
-.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
-h1{font-size:28px;margin:0}
-.sub{color:var(--muted);margin-top:5px}
-a.button{
-  display:inline-block;text-decoration:none;border-radius:10px;padding:10px 14px;
-  background:var(--primary);color:#fff;font-weight:650;
-}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-@media(max-width:850px){.grid{grid-template-columns:repeat(2,1fr)}}
-.card{
-  background:var(--card);border:1px solid var(--line);border-radius:16px;
-  padding:18px;margin-bottom:16px;box-shadow:0 5px 18px rgba(0,0,0,.04);
-}
-.metric{font-size:28px;font-weight:750;margin-top:8px}
-.label{color:var(--muted);font-size:13px}
-.small{font-size:13px;color:var(--muted);line-height:1.55}
-.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
-.section-title h2{margin:0;font-size:20px}
-.assessment{display:grid;grid-template-columns:180px 1fr;gap:18px;align-items:center}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:22px}
+.header,.toolbar,.section-title,.vocab-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.header{margin-bottom:18px;align-items:flex-start}.toolbar{justify-content:flex-end;flex-wrap:wrap}
+h1{font-size:28px;margin:0}.sub,.small,.meta{color:var(--muted)}.sub{margin-top:5px}.small,.meta{font-size:13px}
+a.button,button{border:0;border-radius:10px;padding:9px 12px;font-weight:700;text-decoration:none;cursor:pointer}
+a.button{background:#e8efff;color:#1749b3}button{background:#e5e7eb;color:#111827}button.primary{background:var(--primary);color:#fff}
+select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 5px 18px rgba(0,0,0,.04)}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:850px){.grid,.grid3{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.grid,.grid3{grid-template-columns:1fr}.header{display:block}.toolbar{justify-content:flex-start;margin-top:12px}}
+.metric{font-size:27px;font-weight:780;margin-top:7px}.label{color:var(--muted);font-size:13px}
+.period{font-size:16px;font-weight:750;margin-bottom:12px}
+.assessment{display:grid;grid-template-columns:160px 1fr;gap:20px;align-items:center}
+.score{display:flex;width:140px;height:140px;align-items:center;justify-content:center;border:12px solid #dbeafe;border-radius:50%;font-size:31px;font-weight:800}
 @media(max-width:650px){.assessment{grid-template-columns:1fr}}
-.score{
-  display:flex;align-items:center;justify-content:center;width:150px;height:150px;
-  border-radius:50%;border:12px solid #dbeafe;font-size:32px;font-weight:800;
-}
-.chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:13px}
-.session{
-  display:grid;grid-template-columns:128px 1fr auto;gap:14px;align-items:center;
-  padding:14px 0;border-top:1px solid var(--line);
-}
-.session:first-child{border-top:0}
-@media(max-width:700px){.session{grid-template-columns:100px 1fr}.session-actions{grid-column:1/-1}}
-.thumb{width:128px;aspect-ratio:16/9;border-radius:9px;object-fit:cover;background:#111}
-@media(max-width:700px){.thumb{width:100px}}
-.session-title{font-weight:700;word-break:break-all}
-.progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:8px 0}
-.bar{height:100%;background:var(--primary)}
-.meta{color:var(--muted);font-size:13px}
-.status-ok{color:var(--ok);font-weight:700}
-.status-open{color:var(--warn);font-weight:700}
-.session-actions a{
-  text-decoration:none;display:inline-block;padding:9px 12px;border-radius:9px;
-  background:#e8efff;color:#1749b3;font-weight:700;white-space:nowrap;
-}
-.empty{padding:24px 0;color:var(--muted);text-align:center}
-.report{line-height:1.8}
-.vocab-item{
-  padding:13px 0;border-top:1px solid var(--line);
-}
-.vocab-item:first-child{border-top:0}
-.vocab-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.vocab-word{font-size:19px;font-weight:750}
-.vocab-meaning{font-size:16px;color:#1749b3}
-.vocab-context{margin-top:5px;color:#475467;line-height:1.55}
-.vocab-meta{margin-top:5px;color:var(--muted);font-size:12px}
-strong.value{color:var(--text)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:13px}
+.session{display:grid;grid-template-columns:128px 1fr auto;gap:14px;align-items:center;padding:14px 0;border-top:1px solid var(--line)}.session:first-child{border-top:0}
+.thumb{width:128px;aspect-ratio:16/9;border-radius:9px;object-fit:cover;background:#111}.title{font-weight:750}.progress{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin:8px 0}.bar{height:100%;background:var(--primary)}
+.status-ok{color:var(--ok);font-weight:700}.status-open{color:var(--warn);font-weight:700}
+.vocab{padding:14px 0;border-top:1px solid var(--line)}.vocab:first-child{border-top:0}.word{font-size:20px;font-weight:780}.meaning{font-size:17px;color:#1749b3}.context{margin-top:6px;color:#475467;line-height:1.55}.review-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.review-actions button{padding:7px 9px;font-size:12px}
+.empty{text-align:center;padding:22px;color:var(--muted)}.report{line-height:1.75}.error{color:#b42318}
 </style>
 </head>
 <body>
@@ -78,265 +37,208 @@ strong.value{color:var(--text)}
   <div class="header">
     <div>
       <h1>学习中心</h1>
-      <div class="sub">历史记录、当天总结、听写表现评估和断点续练</div>
+      <div class="sub">听写趋势、弱项、生词复习、历史练习</div>
     </div>
-    <a class="button" href="/">返回听写</a>
-  </div>
-
-  <div class="grid">
-    <div class="card"><div class="label">今天完成句子</div><div id="todayCompleted" class="metric">–</div></div>
-    <div class="card"><div class="label">今天错误次数</div><div id="todayErrors" class="metric">–</div></div>
-    <div class="card"><div class="label">今天首遍正确率</div><div id="todayAccuracy" class="metric">–</div></div>
-    <div class="card"><div class="label">累计完成句子</div><div id="overallCompleted" class="metric">–</div></div>
+    <div class="toolbar">
+      <select id="learnerSelect"></select>
+      <button id="addLearner">+ 学习者</button>
+      <a class="button" href="/review">错句复习</a>
+      <a class="button" href="/">返回听写</a>
+    </div>
   </div>
 
   <div class="card">
-    <div class="section-title"><h2>当前听写表现</h2></div>
+    <div class="section-title"><h2>今日</h2><span class="small" id="todaySummary"></span></div>
+    <div class="grid">
+      <div><div class="label">完成句子</div><div class="metric" id="todayCompleted">–</div></div>
+      <div><div class="label">首遍正确率</div><div class="metric" id="todayAccuracy">–</div></div>
+      <div><div class="label">重复播放/句</div><div class="metric" id="todayReplays">–</div></div>
+      <div><div class="label">练习时间</div><div class="metric" id="todayMinutes">–</div></div>
+    </div>
+  </div>
+
+  <div class="grid3">
+    <div class="card"><div class="period">最近 7 天</div><div id="sevenStats" class="report"></div></div>
+    <div class="card"><div class="period">最近 30 天</div><div id="thirtyStats" class="report"></div></div>
+    <div class="card"><div class="period">累计</div><div id="overallStats" class="report"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>当前听写表现</h2><span class="small">趋势指标，不等同 CEFR</span></div>
     <div class="assessment">
-      <div id="scoreCircle" class="score">–</div>
+      <div id="score" class="score">–</div>
       <div>
-        <div id="assessmentLabel" style="font-size:22px;font-weight:750">正在计算…</div>
-        <div id="assessmentStats" class="report"></div>
-        <div id="assessmentNote" class="small" style="margin-top:8px"></div>
+        <div id="assessmentLabel" style="font-size:22px;font-weight:780"></div>
+        <div id="assessmentNote" class="report"></div>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="section-title"><h2>今日总结</h2></div>
-    <div id="dailyReport" class="report">正在读取…</div>
-    <div style="margin-top:14px">
-      <div class="label" style="margin-bottom:8px">今天最常出错</div>
-      <div id="todayErrorsList" class="chips"></div>
+  <div class="grid3">
+    <div class="card">
+      <div class="section-title"><h2>今日高频错词</h2></div>
+      <div id="todayErrors" class="chips"></div>
     </div>
-  </div>
-
-  <div class="card">
-    <div class="section-title"><h2>累计高频错词</h2></div>
-    <div id="topErrors" class="chips"></div>
+    <div class="card">
+      <div class="section-title"><h2>累计高频错词</h2></div>
+      <div id="topErrors" class="chips"></div>
+    </div>
+    <div class="card">
+      <div class="section-title"><h2>辅助使用</h2></div>
+      <div id="assistStats" class="report"></div>
+    </div>
   </div>
 
   <div class="card">
     <div class="section-title">
-      <h2>生词本</h2>
-      <div class="small">点击原文中的单词后可以加入这里</div>
+      <h2>到期生词复习</h2>
+      <span class="small">Again / Hard / Good / Easy 会自动安排下一次复习</span>
     </div>
+    <div id="dueVocabulary">正在读取…</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>生词本</h2><span class="small">同一单词可以保存多个语境义项</span></div>
     <div id="vocabulary">正在读取…</div>
   </div>
 
   <div class="card">
-    <div class="section-title">
-      <h2>练习目录</h2>
-      <div class="small">未完成项目可以随时继续</div>
-    </div>
+    <div class="section-title"><h2>练习目录</h2><span class="small">新练习使用保存的句子快照恢复</span></div>
     <div id="sessions">正在读取…</div>
   </div>
 </div>
 
 <script>
-function text(value, fallback) {
-  return value === null || value === undefined ? (fallback || "–") : String(value);
+let activeLearnerId = null;
+
+function pct(v){return v===null||v===undefined?"–":Number(v).toFixed(1)+"%"}
+function num(v){return v===null||v===undefined?"–":String(v)}
+function localDate(v){if(!v)return"";const d=new Date(String(v).replace(" ","T")+"Z");return Number.isNaN(d.getTime())?v:d.toLocaleString()}
+
+async function loadLearners(preferredId){
+  const r=await fetch("/api/learners"); const d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||"读取学习者失败");
+  const select=document.getElementById("learnerSelect"); select.textContent="";
+  const stored=Number(localStorage.getItem("mediaDictationLearnerId")||0);
+  const target=Number(preferredId||stored||d.default_learner_id||0);
+  (d.learners||[]).forEach(x=>{const o=document.createElement("option");o.value=String(x.id);o.textContent=x.name;select.appendChild(o)});
+  const ids=(d.learners||[]).map(x=>Number(x.id));
+  activeLearnerId=ids.includes(target)?target:Number(d.default_learner_id||ids[0]||0);
+  select.value=String(activeLearnerId); localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));
 }
 
-function pct(value) {
-  return value === null || value === undefined ? "–" : Number(value).toFixed(1) + "%";
+async function addLearner(){
+  const name=prompt("新学习者名称："); if(!name||!name.trim())return;
+  const r=await fetch("/api/learners",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name.trim()})});
+  const d=await r.json(); if(!r.ok||!d.ok){alert(d.error||"创建失败");return}
+  await loadLearners(d.learner.id); await loadDashboard();
 }
 
-function localDate(value) {
-  if (!value) return "";
-  const parsed = new Date(String(value).replace(" ", "T") + "Z");
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
+function renderWindow(id,s){
+  document.getElementById(id).innerHTML=
+    "完成：<b>"+num(s.completed_sentences)+"</b> 句<br>"+
+    "首遍正确率：<b>"+pct(s.first_pass_accuracy)+"</b><br>"+
+    "错误：<b>"+num(s.errors)+"</b> 次<br>"+
+    "重复播放/句：<b>"+num(s.replays_per_completed_sentence)+"</b><br>"+
+    "查看原文：<b>"+num(s.reveals)+"</b> 次<br>"+
+    "练习时间：<b>"+num(s.time_spent_minutes)+"</b> 分钟";
 }
 
-function renderChips(id, items) {
-  const host = document.getElementById(id);
-  host.textContent = "";
-  if (!items || !items.length) {
-    host.innerHTML = '<span class="small">暂无数据</span>';
-    return;
+function renderChips(id,items){
+  const host=document.getElementById(id);host.textContent="";
+  if(!items||!items.length){host.innerHTML='<span class="small">暂无数据</span>';return}
+  items.forEach(x=>{const s=document.createElement("span");s.className="chip";s.textContent=x.word+" × "+x.count;host.appendChild(s)});
+}
+
+function renderReport(d){
+  const t=d.today||{}, s=d.seven_days||{}, m=d.thirty_days||{}, o=d.overall||{}, a=d.assessment||{};
+  document.getElementById("todayCompleted").textContent=num(t.completed_sentences);
+  document.getElementById("todayAccuracy").textContent=pct(t.first_pass_accuracy);
+  document.getElementById("todayReplays").textContent=num(t.replays_per_completed_sentence);
+  document.getElementById("todayMinutes").textContent=num(t.time_spent_minutes)+" min";
+  document.getElementById("todaySummary").textContent=num(t.errors)+" 次纠错 · "+num(t.word_lookups)+" 次查词";
+  renderWindow("sevenStats",s);renderWindow("thirtyStats",m);renderWindow("overallStats",o);
+  document.getElementById("score").textContent=a.score==null?"–":Math.round(a.score);
+  document.getElementById("assessmentLabel").textContent=a.label||"数据不足";
+  document.getElementById("assessmentNote").textContent=a.note||"";
+  document.getElementById("assistStats").innerHTML=
+    "30 天查看原文：<b>"+num(m.reveals)+"</b><br>"+
+    "30 天整句翻译：<b>"+num(m.translations_used)+"</b><br>"+
+    "30 天单词查询：<b>"+num(m.word_lookups)+"</b>";
+  renderChips("todayErrors",d.today_top_errors||[]);renderChips("topErrors",d.top_errors||[]);
+}
+
+function vocabNode(item,withReview){
+  const row=document.createElement("div");row.className="vocab";
+  const top=document.createElement("div");top.className="vocab-top";
+  const w=document.createElement("span");w.className="word";w.textContent=item.word;
+  const m=document.createElement("span");m.className="meaning";m.textContent=item.translation;
+  top.appendChild(w);top.appendChild(m);row.appendChild(top);
+  if(item.context_sentence){const c=document.createElement("div");c.className="context";c.textContent=item.context_sentence;row.appendChild(c)}
+  const meta=document.createElement("div");meta.className="meta";
+  meta.textContent="语境 "+String(item.added_count||0)+" 个 · 已复习 "+String(item.review_count||0)+" 次 · 下次 "+localDate(item.due_at);
+  row.appendChild(meta);
+  if(withReview){
+    const actions=document.createElement("div");actions.className="review-actions";
+    [["again","Again"],["hard","Hard"],["good","Good"],["easy","Easy"]].forEach(pair=>{
+      const b=document.createElement("button");b.textContent=pair[1];
+      b.addEventListener("click",async()=>{b.disabled=true;await reviewWord(item.id,pair[0]);});
+      actions.appendChild(b);
+    });row.appendChild(actions);
   }
+  return row;
+}
 
-  items.forEach(function(item) {
-    const span = document.createElement("span");
-    span.className = "chip";
-    span.textContent = item.word + " × " + item.count;
-    host.appendChild(span);
+async function reviewWord(id,rating){
+  const r=await fetch("/api/vocabulary/"+encodeURIComponent(id)+"/review",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rating})});
+  const d=await r.json();if(!r.ok||!d.ok){alert(d.error||"复习记录失败");return}await loadDashboard();
+}
+
+function renderVocabulary(id,items,withReview){
+  const host=document.getElementById(id);host.textContent="";
+  if(!items||!items.length){host.innerHTML='<div class="empty">暂无项目。</div>';return}
+  items.forEach(x=>host.appendChild(vocabNode(x,withReview)));
+}
+
+function renderSessions(items){
+  const host=document.getElementById("sessions");host.textContent="";
+  if(!items||!items.length){host.innerHTML='<div class="empty">还没有练习记录。</div>';return}
+  items.forEach(x=>{
+    const row=document.createElement("div");row.className="session";
+    const img=document.createElement("img");img.className="thumb";img.loading="lazy";img.src="https://img.youtube.com/vi/"+encodeURIComponent(x.video_id)+"/mqdefault.jpg";
+    const info=document.createElement("div");const title=document.createElement("div");title.className="title";title.textContent=x.video_title||x.video_id;
+    const p=document.createElement("div");p.className="progress";const bar=document.createElement("div");bar.className="bar";bar.style.width=Math.min(100,Number(x.progress_percent||0))+"%";p.appendChild(bar);
+    const meta=document.createElement("div");meta.className="meta";meta.textContent=x.completed_sentences+" / "+x.total_items+" 句 · "+x.error_count+" 次错误 · "+localDate(x.updated_at);
+    const state=document.createElement("div");state.className=x.completed?"status-ok":"status-open";state.textContent=x.completed?"已完成":"未完成";
+    info.append(title,p,meta,state);
+    const action=document.createElement("div");if(!x.completed){const a=document.createElement("a");a.className="button";a.href="/?resume="+encodeURIComponent(x.id);a.textContent="继续练习";action.appendChild(a)}
+    row.append(img,info,action);host.appendChild(row);
   });
 }
 
-function renderReport(data) {
-  const today = data.today || {};
-  const overall = data.overall || {};
-  const assessment = data.assessment || {};
-
-  document.getElementById("todayCompleted").textContent = text(today.completed_sentences, "0");
-  document.getElementById("todayErrors").textContent = text(today.errors, "0");
-  document.getElementById("todayAccuracy").textContent = pct(today.first_pass_accuracy);
-  document.getElementById("overallCompleted").textContent = text(overall.completed_sentences, "0");
-
-  document.getElementById("scoreCircle").textContent =
-    assessment.score === null || assessment.score === undefined ? "–" : Math.round(assessment.score);
-  document.getElementById("assessmentLabel").textContent = assessment.label || "数据不足";
-  document.getElementById("assessmentNote").textContent = assessment.note || "";
-  document.getElementById("assessmentStats").innerHTML =
-    '累计首遍正确率：<strong class="value">' + pct(overall.first_pass_accuracy) + '</strong><br>' +
-    '每个已完成句子的平均错误次数：<strong class="value">' +
-    text(overall.errors_per_completed_sentence, "–") + '</strong><br>' +
-    '已尝试句子样本：<strong class="value">' + text(overall.attempted_sentences, "0") + '</strong>';
-
-  document.getElementById("dailyReport").innerHTML =
-    '今天共建立 <strong class="value">' + text(today.sessions, "0") + '</strong> 次练习，' +
-    '完成 <strong class="value">' + text(today.completed_sentences, "0") + '</strong> 个句子，' +
-    '记录 <strong class="value">' + text(today.errors, "0") + '</strong> 次纠错。' +
-    '首遍正确率为 <strong class="value">' + pct(today.first_pass_accuracy) + '</strong>。';
-
-  renderChips("topErrors", data.top_errors || []);
-  renderChips("todayErrorsList", data.today_top_errors || []);
+async function loadDashboard(){
+  const q="?learner_id="+encodeURIComponent(activeLearnerId);
+  const [rr,hr,vr,dr]=await Promise.all([
+    fetch("/api/report"+q),
+    fetch("/api/history"+q+"&limit=100"),
+    fetch("/api/vocabulary"+q+"&limit=200"),
+    fetch("/api/vocabulary"+q+"&limit=50&due=1")
+  ]);
+  const [r,h,v,d]=await Promise.all([rr.json(),hr.json(),vr.json(),dr.json()]);
+  if(!r.ok)throw new Error(r.error||"报告读取失败");
+  renderReport(r);renderSessions(h.sessions||[]);renderVocabulary("vocabulary",v.items||[],false);renderVocabulary("dueVocabulary",d.items||[],true);
 }
 
-function renderVocabulary(items) {
-  const host = document.getElementById("vocabulary");
-  host.textContent = "";
+document.getElementById("learnerSelect").addEventListener("change",async function(){
+  activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));
+  try{await loadDashboard()}catch(e){alert(String(e.message||e))}
+});
+document.getElementById("addLearner").addEventListener("click",addLearner);
 
-  if (!items || !items.length) {
-    host.innerHTML = '<div class="empty">生词本还是空的。</div>';
-    return;
-  }
-
-  items.forEach(function(item) {
-    const row = document.createElement("div");
-    row.className = "vocab-item";
-
-    const top = document.createElement("div");
-    top.className = "vocab-top";
-
-    const word = document.createElement("span");
-    word.className = "vocab-word";
-    word.textContent = item.word;
-
-    const meaning = document.createElement("span");
-    meaning.className = "vocab-meaning";
-    meaning.textContent = item.translation;
-
-    top.appendChild(word);
-    top.appendChild(meaning);
-
-    const context = document.createElement("div");
-    context.className = "vocab-context";
-    context.textContent = item.context_sentence || "";
-
-    const meta = document.createElement("div");
-    meta.className = "vocab-meta";
-    meta.textContent =
-      "加入 " + String(item.added_count || 1) + " 次 · " +
-      localDate(item.updated_at);
-
-    row.appendChild(top);
-    if (item.context_sentence) {
-      row.appendChild(context);
-    }
-    row.appendChild(meta);
-    host.appendChild(row);
-  });
-}
-
-function renderSessions(sessions) {
-  const host = document.getElementById("sessions");
-  host.textContent = "";
-
-  if (!sessions || !sessions.length) {
-    host.innerHTML = '<div class="empty">还没有练习记录。</div>';
-    return;
-  }
-
-  sessions.forEach(function(item) {
-    const row = document.createElement("div");
-    row.className = "session";
-
-    const img = document.createElement("img");
-    img.className = "thumb";
-    img.alt = "";
-    img.loading = "lazy";
-    img.src = "https://img.youtube.com/vi/" + encodeURIComponent(item.video_id) + "/mqdefault.jpg";
-
-    const info = document.createElement("div");
-
-    const title = document.createElement("div");
-    title.className = "session-title";
-    title.textContent = item.video_id;
-
-    const progress = document.createElement("div");
-    progress.className = "progress";
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    bar.style.width = Math.max(0, Math.min(100, Number(item.progress_percent || 0))) + "%";
-    progress.appendChild(bar);
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent =
-      item.completed_sentences + " / " + item.total_items + " 句 · " +
-      item.error_count + " 次错误 · " + localDate(item.updated_at);
-
-    const status = document.createElement("div");
-    status.className = item.completed ? "status-ok" : "status-open";
-    status.textContent = item.completed ? "已完成" : "未完成";
-
-    info.appendChild(title);
-    info.appendChild(progress);
-    info.appendChild(meta);
-    info.appendChild(status);
-
-    const actions = document.createElement("div");
-    actions.className = "session-actions";
-
-    if (!item.completed) {
-      const link = document.createElement("a");
-      link.href = "/?resume=" + encodeURIComponent(item.id);
-      link.textContent = "继续练习";
-      actions.appendChild(link);
-    } else {
-      const span = document.createElement("span");
-      span.className = "small";
-      span.textContent = "完成";
-      actions.appendChild(span);
-    }
-
-    row.appendChild(img);
-    row.appendChild(info);
-    row.appendChild(actions);
-    host.appendChild(row);
-  });
-}
-
-async function load() {
-  try {
-    const [reportResponse, historyResponse, vocabularyResponse] = await Promise.all([
-      fetch("/api/report"),
-      fetch("/api/history?limit=100"),
-      fetch("/api/vocabulary?limit=200")
-    ]);
-
-    const report = await reportResponse.json();
-    const history = await historyResponse.json();
-    const vocabulary = await vocabularyResponse.json();
-
-    if (!report.ok) throw new Error(report.error || "报告读取失败");
-    if (!history.ok) throw new Error(history.error || "历史记录读取失败");
-    if (!vocabulary.ok) throw new Error(vocabulary.error || "生词本读取失败");
-
-    renderReport(report);
-    renderVocabulary(vocabulary.items || []);
-    renderSessions(history.sessions || []);
-  } catch (error) {
-    document.getElementById("dailyReport").textContent = String(error.message || error);
-    document.getElementById("vocabulary").textContent = String(error.message || error);
-    document.getElementById("sessions").textContent = String(error.message || error);
-  }
-}
-
-load();
+(async function(){
+  try{await loadLearners();await loadDashboard()}
+  catch(e){document.getElementById("sessions").innerHTML='<div class="error">'+String(e.message||e)+"</div>"}
+})();
 </script>
 </body>
 </html>
