@@ -25,8 +25,12 @@ from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConf
 
 from storage import (
     add_vocabulary_word,
+    create_learner,
     create_session,
+    get_default_learner_id,
     get_learning_report,
+    get_review_sentences,
+    get_schema_version,
     get_session_detail,
     get_session_history,
     get_stats,
@@ -34,7 +38,10 @@ from storage import (
     get_vocabulary,
     get_word_translation,
     init_db,
+    list_learners,
     record_attempt,
+    record_practice_event,
+    review_vocabulary,
     save_translation,
     save_word_translation,
 )
@@ -65,6 +72,9 @@ SOFT_MAX_WORDS = 14
 HARD_MAX_WORDS = 18
 MIN_PHRASE_WORDS = 4
 PAUSE_BREAK_SECONDS = 0.75
+SEGMENTATION_VERSION = "v3"
+SENTENCE_PROMPT_VERSION = "sentence-v2"
+WORD_PROMPT_VERSION = "word-v2"
 
 WORD_RE = re.compile(r"\b[A-Za-z0-9]+(?:[’'][A-Za-z0-9]+)*\b")
 STRONG_END_RE = re.compile(r'[.!?…]["\'’”)]*$')
@@ -166,6 +176,21 @@ PRONOUN_STARTERS = {
     "this",
     "that",
 }
+
+
+def fetch_video_title(video_id: str) -> str:
+    """Best-effort YouTube title lookup; practice still works if it fails."""
+    url = (
+        "https://www.youtube.com/oembed?format=json&url="
+        f"https://www.youtube.com/watch?v={video_id}"
+    )
+    req = Request(url, headers={"User-Agent": "MediaDictation/1.0"}, method="GET")
+    try:
+        with urlopen(req, timeout=4.0) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return str(data.get("title", "")).strip()[:300]
+    except Exception:
+        return ""
 
 
 def extract_video_id(value: str) -> str:
@@ -716,11 +741,18 @@ def translate_to_chinese_openai(text: str) -> tuple[str, str, str]:
     return translation, model, actual_tier
 
 
-def translate_to_chinese_ollama(text: str) -> tuple[str, str, str]:
+def translate_to_chinese_ollama(
+    text: str,
+    timeout_override: float | None = None,
+) -> tuple[str, str, str]:
     model = ollama_model("OLLAMA_TRANSLATION_MODEL")
-    timeout = ollama_timeout_seconds(
-        "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
-        60.0,
+    timeout = (
+        float(timeout_override)
+        if timeout_override is not None
+        else ollama_timeout_seconds(
+            "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
+            60.0,
+        )
     )
 
     translation = ollama_chat(
@@ -745,9 +777,13 @@ def translate_to_chinese(text: str) -> tuple[str, str, str]:
     if provider == "openai":
         return translate_to_chinese_openai(text)
 
-    # auto: local first, cloud fallback.
+    # auto: use a short local budget so cloud fallback still has time to finish.
+    local_budget = ollama_timeout_seconds(
+        "OLLAMA_AUTO_TRANSLATION_TIMEOUT_SECONDS",
+        12.0,
+    )
     try:
-        return translate_to_chinese_ollama(text)
+        return translate_to_chinese_ollama(text, timeout_override=local_budget)
     except Exception as local_exc:
         try:
             return translate_to_chinese_openai(text)
@@ -844,11 +880,16 @@ def translate_word_in_context_openai(
 def translate_word_in_context_ollama(
     word: str,
     context_sentence: str,
+    timeout_override: float | None = None,
 ) -> tuple[str, str, str]:
     model = ollama_model("OLLAMA_WORD_MODEL")
-    timeout = ollama_timeout_seconds(
-        "OLLAMA_WORD_TIMEOUT_SECONDS",
-        45.0,
+    timeout = (
+        float(timeout_override)
+        if timeout_override is not None
+        else ollama_timeout_seconds(
+            "OLLAMA_WORD_TIMEOUT_SECONDS",
+            45.0,
+        )
     )
 
     translation = ollama_chat(
@@ -881,8 +922,16 @@ def translate_word_in_context(
     if provider == "openai":
         return translate_word_in_context_openai(word, context_sentence)
 
+    local_budget = ollama_timeout_seconds(
+        "OLLAMA_AUTO_WORD_TIMEOUT_SECONDS",
+        7.0,
+    )
     try:
-        return translate_word_in_context_ollama(word, context_sentence)
+        return translate_word_in_context_ollama(
+            word,
+            context_sentence,
+            timeout_override=local_budget,
+        )
     except Exception as local_exc:
         try:
             return translate_word_in_context_openai(word, context_sentence)
@@ -890,6 +939,27 @@ def translate_word_in_context(
             raise RuntimeError(
                 f"本地 Ollama 失败：{local_exc}；OpenAI fallback 也失败：{cloud_exc}"
             ) from cloud_exc
+
+
+def result_identity(model_label: str) -> tuple[str, str]:
+    if model_label.startswith("ollama:"):
+        return "ollama", model_label[len("ollama:"):]
+    return "openai", model_label
+
+
+def cache_candidates(*, word: bool = False) -> list[tuple[str, str]]:
+    provider = llm_provider()
+    local_model = ollama_model("OLLAMA_WORD_MODEL" if word else "OLLAMA_TRANSLATION_MODEL")
+    openai_model = os.getenv(
+        "OPENAI_WORD_MODEL" if word else "OPENAI_TRANSLATION_MODEL",
+        "gpt-5.6-luna",
+    ).strip() or "gpt-5.6-luna"
+
+    if provider == "ollama":
+        return [("ollama", local_model)]
+    if provider == "openai":
+        return [("openai", openai_model)]
+    return [("ollama", local_model), ("openai", openai_model)]
 
 
 def cached_service_tier(model: str, *, word: bool = False) -> str:
