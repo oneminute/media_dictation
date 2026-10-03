@@ -12,6 +12,7 @@ and optional OpenAI fallback.
 ### Dictation
 
 - Paste a YouTube or YouTube Music URL and fetch captions automatically.
+- Or upload local MP3/WAV/M4A/MP4 and other common audio/video files for optional local Whisper transcription.
 - Prefer English captions when available.
 - Clean non-speech cues such as `[Music]`.
 - Segment captions into short listening phrases using punctuation, pauses,
@@ -35,6 +36,8 @@ and optional OpenAI fallback.
 - Translation caches are scoped by provider, model, and prompt version.
 
 ### Local and cloud LLMs
+
+The main page also has a per-browser **LLM selector** (Auto / Local Qwen / OpenAI), so normal switching does not require editing `.env`. The environment value remains the server default.
 
 Three provider modes are supported:
 
@@ -71,7 +74,55 @@ OLLAMA_AUTO_WORD_TIMEOUT_SECONDS=7
 Ollama does not need to be exposed to the LAN. Media Dictation calls
 `127.0.0.1:11434` on the server PC.
 
-### Persistent learning data
+### Optional local media + Whisper
+
+Local media is optional and does not change the normal YouTube path.
+
+Install once:
+
+```
+setup_whisper_windows.bat
+```
+
+The main page then accepts common formats including MP3, WAV, M4A, AAC,
+FLAC, OGG, OPUS, MP4, WEBM, MOV, and MKV.
+
+Recommended settings for the current Windows workstation:
+
+```env
+WHISPER_MODEL=small.en
+WHISPER_LANGUAGE=en
+WHISPER_DEVICE=auto
+WHISPER_RELEASE_OLLAMA=true
+WHISPER_COMPUTE_TYPE_CUDA=int8_float16
+WHISPER_COMPUTE_TYPE_CPU=int8
+
+WHISPER_DOWNLOAD_ROOT=E:/AI/whisper-models
+MEDIA_DICTATION_MEDIA_DIR=E:/AI/media-dictation-media
+MEDIA_MAX_UPLOAD_MB=1024
+```
+
+The flow is:
+
+```
+local media upload
+ -> optional Qwen VRAM release
+ -> faster-whisper
+ -> word timestamps
+ -> normal Media Dictation segmentation
+ -> exact practice-item snapshot
+ -> HTML5 audio/video playback
+```
+
+With `WHISPER_DEVICE=auto`, the service tries CUDA first and falls back to CPU
+int8 if CUDA initialization or transcription fails. On an 8 GB GPU,
+`WHISPER_RELEASE_OLLAMA=true` is recommended because the loaded Qwen model can
+otherwise occupy most VRAM.
+
+Whisper model downloads can be kept off the system drive with
+`WHISPER_DOWNLOAD_ROOT`.
+
+## Persistent learning data
 
 SQLite is created automatically at:
 
@@ -154,13 +205,23 @@ the selected learner containing:
 - sentence reviews;
 - vocabulary and contexts.
 
-A database backup script is also provided:
+A fast database-only backup script is provided:
 
 ```
 backup_data_windows.bat
 ```
 
-Production startup makes a SQLite backup before starting the server.
+Production startup runs this SQLite backup automatically.
+
+When local media is used, run a complete backup periodically:
+
+```
+backup_full_windows.bat
+```
+
+That creates a timestamped copy containing both SQLite and locally uploaded
+media. The portable JSON learner export contains media metadata but not the
+binary audio/video files.
 
 ## Windows setup
 
@@ -268,7 +329,10 @@ It reports, without exposing secrets:
 - Ollama availability and model names;
 - local timeout budgets;
 - whether OpenAI is configured;
-- OpenAI model and service-tier settings.
+- OpenAI model and service-tier settings;
+- whether faster-whisper is installed;
+- Whisper model/device configuration;
+- media upload limit.
 
 ## Testing
 
