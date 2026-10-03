@@ -26,19 +26,16 @@
 
 ### Local media and Whisper
 
-Support MP3/WAV/M4A/MP4 files in addition to YouTube.
-
-Preferred design:
-
-1. ingest local media;
-2. transcribe with faster-whisper;
-3. request word timestamps;
-4. turn timestamps into practice items;
-5. snapshot them exactly like YouTube items.
-
-For an 8 GB RTX 3070 Ti, Whisper and Qwen should not be forced to occupy VRAM
-at the same time. Transcription should be an explicit preprocessing step and
-the Whisper model should be released afterward.
+- [x] MP3/WAV/M4A/MP4 and common local media upload
+- [x] optional faster-whisper installation
+- [x] word timestamps
+- [x] automatic GPU -> CPU fallback
+- [x] Qwen VRAM release before transcription
+- [x] E-drive configurable Whisper/model/media paths
+- [x] exact snapshots and resume for local media
+- [x] local-media weak-sentence review
+- [ ] background transcription jobs with progress for very long media
+- [ ] media library management / deletion UI
 
 ### Standardized listening assessment
 
