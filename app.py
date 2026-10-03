@@ -720,7 +720,7 @@ def translate_to_chinese_ollama(text: str) -> tuple[str, str, str]:
     model = ollama_model("OLLAMA_TRANSLATION_MODEL")
     timeout = ollama_timeout_seconds(
         "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
-        30.0,
+        60.0,
     )
 
     translation = ollama_chat(
@@ -848,7 +848,7 @@ def translate_word_in_context_ollama(
     model = ollama_model("OLLAMA_WORD_MODEL")
     timeout = ollama_timeout_seconds(
         "OLLAMA_WORD_TIMEOUT_SECONDS",
-        15.0,
+        45.0,
     )
 
     translation = ollama_chat(
@@ -984,12 +984,12 @@ def health():
             ),
             "ollama_translation_timeout_seconds": ollama_timeout_seconds(
                 "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
-                30.0,
+                60.0,
             ),
             "ollama_word_model": ollama_model("OLLAMA_WORD_MODEL"),
             "ollama_word_timeout_seconds": ollama_timeout_seconds(
                 "OLLAMA_WORD_TIMEOUT_SECONDS",
-                15.0,
+                45.0,
             ),
             "openai_enabled": openai_ready,
             "openai_translation_model": os.getenv(
