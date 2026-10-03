@@ -2155,6 +2155,8 @@ def list_media_sources(
                 "last_used_at": row["last_used_at"],
             }
         )
+    for item in result:
+        item["latest_job"] = latest_transcription_job(item["id"])
     return result
 
 
