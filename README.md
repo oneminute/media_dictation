@@ -234,10 +234,13 @@ portable JSON package for the selected learner containing:
 - attempts;
 - interaction telemetry;
 - sentence reviews;
-- vocabulary and contexts.
+- vocabulary, context occurrences, FSRS card state, and FSRS review history;
+- CEFR-aligned screening runs and responses.
 
 Import validates `export_version=1` and restores the package into a **new
 learner profile**, preserving the original learner rather than overwriting it.
+Session timestamps, FSRS scheduling state/review history, and assessment history
+are retained.
 JSON restore does not contain local media binaries; use the full backup for
 those files.
 
