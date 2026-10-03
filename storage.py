@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_LEARNER_NAME = "Default"
 
 
@@ -59,6 +59,20 @@ def init_db() -> None:
                 is_default INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS media_sources (
+                id TEXT PRIMARY KEY,
+                learner_id INTEGER,
+                original_name TEXT NOT NULL,
+                stored_filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT '',
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                title TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(learner_id)
+                    REFERENCES learners(id)
+                    ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS practice_sessions (
@@ -284,6 +298,21 @@ def init_db() -> None:
         _add_column_if_missing(conn, "practice_sessions", "learner_id", "INTEGER")
         _add_column_if_missing(conn, "practice_sessions", "video_title", "TEXT")
         _add_column_if_missing(conn, "practice_sessions", "segmentation_version", "TEXT")
+        _add_column_if_missing(
+            conn,
+            "practice_sessions",
+            "source_type",
+            "TEXT NOT NULL DEFAULT 'youtube'",
+        )
+        _add_column_if_missing(conn, "practice_sessions", "media_id", "TEXT")
+
+        conn.execute(
+            """
+            UPDATE practice_sessions
+            SET source_type = 'youtube'
+            WHERE source_type IS NULL OR source_type = ''
+            """
+        )
 
         conn.execute(
             "UPDATE practice_sessions SET learner_id = ? WHERE learner_id IS NULL",
@@ -464,6 +493,80 @@ def _coerce_learner_id(learner_id: int | None) -> int:
     return value if exists is not None else get_default_learner_id()
 
 
+def save_media_source(
+    *,
+    media_id: str,
+    original_name: str,
+    stored_filename: str,
+    mime_type: str,
+    size_bytes: int,
+    title: str,
+    learner_id: int | None = None,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO media_sources (
+                id,
+                learner_id,
+                original_name,
+                stored_filename,
+                mime_type,
+                size_bytes,
+                title
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                media_id,
+                learner_id,
+                original_name,
+                stored_filename,
+                mime_type or "",
+                max(0, int(size_bytes or 0)),
+                title or "",
+            ),
+        )
+    return get_media_source(media_id) or {}
+
+
+def get_media_source(media_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                id,
+                learner_id,
+                original_name,
+                stored_filename,
+                mime_type,
+                size_bytes,
+                title,
+                created_at
+            FROM media_sources
+            WHERE id = ?
+            """,
+            (str(media_id),),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "learner_id": (
+            int(row["learner_id"])
+            if row["learner_id"] is not None
+            else None
+        ),
+        "original_name": row["original_name"],
+        "stored_filename": row["stored_filename"],
+        "mime_type": row["mime_type"],
+        "size_bytes": int(row["size_bytes"] or 0),
+        "title": row["title"],
+        "created_at": row["created_at"],
+    }
+
+
 def create_session(
     *,
     video_id: str,
@@ -475,6 +578,8 @@ def create_session(
     video_title: str = "",
     items: Iterable[dict[str, Any]] | None = None,
     segmentation_version: str = "v2",
+    source_type: str = "youtube",
+    media_id: str | None = None,
 ) -> int:
     learner_id = _coerce_learner_id(learner_id)
     item_list = list(items or [])
@@ -491,9 +596,11 @@ def create_session(
                 total_items,
                 learner_id,
                 video_title,
-                segmentation_version
+                segmentation_version,
+                source_type,
+                media_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 video_id,
@@ -504,6 +611,8 @@ def create_session(
                 learner_id,
                 video_title,
                 segmentation_version,
+                source_type or "youtube",
+                media_id,
             ),
         )
         session_id = int(cursor.lastrowid)
@@ -730,6 +839,8 @@ def get_session_detail(session_id: int) -> dict[str, Any] | None:
         "learner_name": row["learner_name"] or DEFAULT_LEARNER_NAME,
         "video_id": row["video_id"],
         "video_title": row["video_title"] or "",
+        "source_type": row["source_type"] or "youtube",
+        "media_id": row["media_id"],
         "source_url": row["source_url"],
         "language": row["language"] or "",
         "is_generated": bool(row["is_generated"]),
@@ -759,6 +870,8 @@ def get_session_history(
                 ps.id,
                 ps.video_id,
                 ps.video_title,
+                ps.source_type,
+                ps.media_id,
                 ps.source_url,
                 ps.language,
                 ps.is_generated,
@@ -788,6 +901,8 @@ def get_session_history(
                 "id": int(row["id"]),
                 "video_id": row["video_id"],
                 "video_title": row["video_title"] or "",
+                "source_type": row["source_type"] or "youtube",
+                "media_id": row["media_id"],
                 "source_url": row["source_url"],
                 "language": row["language"] or "",
                 "is_generated": bool(row["is_generated"]),
@@ -1062,6 +1177,8 @@ def get_review_sentences(
                 COALESCE(pi.duration, 0) AS duration,
                 ps.video_id,
                 ps.video_title,
+                ps.source_type,
+                ps.media_id,
                 ps.source_url,
                 COUNT(*) AS error_count,
                 MAX(a.created_at) AS last_error_at
@@ -1081,6 +1198,8 @@ def get_review_sentences(
                 duration,
                 ps.video_id,
                 ps.video_title,
+                ps.source_type,
+                ps.media_id,
                 ps.source_url
             ORDER BY error_count DESC, last_error_at DESC
             LIMIT ?
@@ -1098,6 +1217,8 @@ def get_review_sentences(
             "duration": float(row["duration"] or 0),
             "video_id": row["video_id"],
             "video_title": row["video_title"] or "",
+            "source_type": row["source_type"] or "youtube",
+            "media_id": row["media_id"],
             "source_url": row["source_url"],
             "error_count": int(row["error_count"] or 0),
             "last_error_at": row["last_error_at"],
@@ -1586,7 +1707,8 @@ def export_learner_data(
         sessions = conn.execute(
             """
             SELECT
-                id, video_id, video_title, source_url, language, is_generated,
+                id, video_id, video_title, source_type, media_id, source_url,
+                language, is_generated,
                 total_items, last_sentence_index, completed_sentences,
                 segmentation_version, started_at, updated_at
             FROM practice_sessions
