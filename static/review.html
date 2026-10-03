@@ -72,7 +72,27 @@ function play(){
   stopTimer=setInterval(()=>{if(player.getCurrentTime()>=(x.end||x.start+x.duration)-.04){player.pauseVideo();clearInterval(stopTimer)}},40);
 }
 function move(d){if(!items.length)return;index=Math.max(0,Math.min(items.length-1,index+d));reveal=false;render();setTimeout(play,80)}
-function check(){if(!items.length)return;const ok=equalAnswer(document.getElementById("answer").value,items[index].text);document.getElementById("feedback").innerHTML=ok?'<span class="ok">✓ 正确</span>':'<span class="bad">还有错误，再听一次。</span>'}
+async function check(){
+  if(!items.length)return;
+  const answer=document.getElementById("answer").value;
+  const current=items[index];
+  const ok=equalAnswer(answer,current.text);
+  document.getElementById("feedback").innerHTML=ok?'<span class="ok">✓ 正确</span>':'<span class="bad">还有错误，再听一次。</span>';
+  try{
+    await fetch("/api/review-sentences/attempt",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        learner_id:learnerId,
+        session_id:current.session_id,
+        sentence_index:current.sentence_index,
+        sentence_text:current.text,
+        answer_before:answer,
+        is_correct:ok
+      })
+    });
+  }catch(e){console.warn("Review logging failed",e)}
+}
 document.getElementById("play").onclick=play;document.getElementById("prev").onclick=()=>move(-1);document.getElementById("next").onclick=()=>move(1);
 document.getElementById("show").onclick=()=>{reveal=!reveal;render()};document.getElementById("check").onclick=check;
 document.getElementById("answer").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();check()}});
