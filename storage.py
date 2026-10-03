@@ -616,6 +616,14 @@ def save_media_source(
                 title
             )
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                learner_id = excluded.learner_id,
+                original_name = excluded.original_name,
+                stored_filename = excluded.stored_filename,
+                mime_type = excluded.mime_type,
+                size_bytes = excluded.size_bytes,
+                title = excluded.title,
+                updated_at = CURRENT_TIMESTAMP
             """,
             (
                 media_id,
@@ -642,7 +650,15 @@ def get_media_source(media_id: str) -> dict[str, Any] | None:
                 mime_type,
                 size_bytes,
                 title,
-                created_at
+                transcription_status,
+                transcript_json,
+                language,
+                duration,
+                whisper_model,
+                whisper_device,
+                whisper_compute_type,
+                created_at,
+                updated_at
             FROM media_sources
             WHERE id = ?
             """,
@@ -662,7 +678,15 @@ def get_media_source(media_id: str) -> dict[str, Any] | None:
         "mime_type": row["mime_type"],
         "size_bytes": int(row["size_bytes"] or 0),
         "title": row["title"],
+        "transcription_status": row["transcription_status"] or "pending",
+        "transcript_json": row["transcript_json"] or "",
+        "language": row["language"] or "",
+        "duration": float(row["duration"] or 0),
+        "whisper_model": row["whisper_model"] or "",
+        "whisper_device": row["whisper_device"] or "",
+        "whisper_compute_type": row["whisper_compute_type"] or "",
         "created_at": row["created_at"],
+        "updated_at": row["updated_at"] or row["created_at"],
     }
 
 
