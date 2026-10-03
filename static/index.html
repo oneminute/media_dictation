@@ -24,10 +24,13 @@ body{
 }
 .wrap{max-width:1080px;margin:0 auto;padding:22px}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .topbar a{
   text-decoration:none;border-radius:10px;padding:9px 12px;
   background:#e8efff;color:#1749b3;font-weight:700;white-space:nowrap;
 }
+.learner-select{width:auto;min-width:125px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff}
+.small-button{padding:8px 10px;font-size:13px}
 h1{font-size:28px;margin:0 0 6px}
 .sub{color:var(--muted);margin-bottom:18px}
 .card{
@@ -197,7 +200,12 @@ button.warn{background:#fef3c7;color:#92400e}
       <h1>Media Dictation</h1>
       <div class="sub">粘贴 YouTube 或 YouTube Music Podcast 链接，逐句听写。原文默认隐藏。</div>
     </div>
-    <a href="/learning">学习中心</a>
+    <div class="top-actions">
+      <select id="learnerSelect" class="learner-select" title="当前学习者"></select>
+      <button id="addLearner" class="small-button">+ 学习者</button>
+      <a href="/review">错句复习</a>
+      <a href="/learning">学习中心</a>
+    </div>
   </div>
 
   <div class="card">
@@ -219,6 +227,7 @@ button.warn{background:#fef3c7;color:#92400e}
         ·
         <span id="range">00:00</span>
         <span id="lang"></span>
+        · <span id="videoTitle"></span>
       </div>
 
       <div class="progress"><div id="bar" class="bar"></div></div>
@@ -286,7 +295,11 @@ let items = [];
 let index = 0;
 let reveal = false;
 let videoId = "";
+let videoTitle = "";
+let segmentationVersion = "";
 let sessionId = null;
+let activeLearnerId = null;
+let sentenceStartedAt = Date.now();
 let stopTimer = null;
 const translationCache = new Map();
 const wordLookupCache = new Map();
@@ -294,6 +307,82 @@ let activeWordLookup = null;
 
 let ctrlDown = false;
 let ctrlUsedAsChord = false;
+
+async function loadLearners(preferredId) {
+  const response = await fetch("/api/learners");
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "无法读取学习者。");
+  }
+
+  const select = document.getElementById("learnerSelect");
+  select.textContent = "";
+
+  const stored = Number(localStorage.getItem("mediaDictationLearnerId") || 0);
+  const target = Number(preferredId || stored || data.default_learner_id || 0);
+
+  (data.learners || []).forEach(function (learner) {
+    const option = document.createElement("option");
+    option.value = String(learner.id);
+    option.textContent = learner.name;
+    select.appendChild(option);
+  });
+
+  const ids = (data.learners || []).map(function (x) { return Number(x.id); });
+  activeLearnerId = ids.includes(target)
+    ? target
+    : Number(data.default_learner_id || ids[0] || 0);
+
+  select.value = String(activeLearnerId);
+  localStorage.setItem("mediaDictationLearnerId", String(activeLearnerId));
+}
+
+async function addLearner() {
+  const name = window.prompt("新学习者名称：");
+  if (!name || !name.trim()) return;
+
+  const response = await fetch("/api/learners", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name: name.trim()})
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    window.alert(data.error || "创建学习者失败。");
+    return;
+  }
+  await loadLearners(data.learner.id);
+}
+
+function logPracticeEvent(eventType, valueMs, detail) {
+  if (!sessionId) return Promise.resolve();
+  return fetch("/api/event", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    keepalive: true,
+    body: JSON.stringify({
+      session_id: sessionId,
+      sentence_index: items.length ? index : null,
+      event_type: eventType,
+      value_ms: Number(valueMs || 0),
+      detail: detail || ""
+    })
+  }).catch(function (error) {
+    console.warn("Practice event logging failed:", error);
+  });
+}
+
+function flushSentenceTime() {
+  if (!sessionId || !items.length) {
+    sentenceStartedAt = Date.now();
+    return;
+  }
+  const elapsed = Date.now() - sentenceStartedAt;
+  sentenceStartedAt = Date.now();
+  if (elapsed >= 500) {
+    void logPracticeEvent("time_spent", elapsed, "");
+  }
+}
 
 function formatTime(seconds) {
   seconds = Math.max(0, Math.floor(seconds || 0));
@@ -312,6 +401,7 @@ function updateUI() {
   document.getElementById("pos").textContent = String(index + 1) + " / " + String(items.length);
   document.getElementById("range").textContent =
     formatTime(item.start) + "–" + formatTime(item.end || (item.start + item.duration));
+  document.getElementById("videoTitle").textContent = videoTitle || videoId;
 
   const sentence = document.getElementById("sentence");
   renderInteractiveSentence(item.text);
@@ -391,6 +481,7 @@ async function lookupWord(word) {
     return;
   }
 
+  void logPracticeEvent("word_lookup", 0, word);
   const context = items[index].text;
   const cacheKey = word.toLowerCase() + "\n" + context;
   const card = document.getElementById("wordCard");
@@ -475,7 +566,10 @@ async function addActiveWordToVocabulary() {
         translation: activeWordLookup.translation,
         context: activeWordLookup.context,
         video_id: videoId,
-        source_url: document.getElementById("url").value.trim()
+        source_url: document.getElementById("url").value.trim(),
+        learner_id: activeLearnerId,
+        session_id: sessionId,
+        sentence_index: index
       })
     });
 
@@ -501,6 +595,7 @@ function focusAnswer() {
 }
 
 function resetForSentence() {
+  sentenceStartedAt = Date.now();
   document.getElementById("answer").value = "";
   document.getElementById("feedback").innerHTML = "";
   const translation = document.getElementById("translation");
@@ -517,6 +612,7 @@ function playCurrent() {
     return;
   }
 
+  void logPracticeEvent("play", 0, "");
   clearInterval(stopTimer);
 
   const item = items[index];
@@ -544,6 +640,8 @@ function moveSentence(delta, autoplay) {
     return;
   }
 
+  flushSentenceTime();
+  void logPracticeEvent(delta > 0 ? "next" : "prev", 0, "");
   index = nextIndex;
   resetForSentence();
 
@@ -557,6 +655,9 @@ function toggleOriginal() {
     return;
   }
   reveal = !reveal;
+  if (reveal) {
+    void logPracticeEvent("reveal", 0, "");
+  }
   if (!reveal) {
     hideWordCard();
   }
@@ -565,7 +666,7 @@ function toggleOriginal() {
 
 function tokenizeWithOffsets(text) {
   const tokens = [];
-  const regex = /\S+/gu;
+  const regex = /[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
@@ -575,10 +676,7 @@ function tokenizeWithOffsets(text) {
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, "");
 
-    // Ignore punctuation-only chunks completely.
-    if (!value) {
-      continue;
-    }
+    if (!value) continue;
 
     tokens.push({
       raw: raw,
@@ -861,6 +959,7 @@ async function translateCurrent() {
     return;
   }
 
+  void logPracticeEvent("translation", 0, "");
   const box = document.getElementById("translation");
   const button = document.getElementById("translate");
   const source = items[index].text;
@@ -931,13 +1030,19 @@ async function startPracticeSession(sourceUrl, transcriptData) {
         source_url: sourceUrl,
         language: transcriptData.language || transcriptData.language_code || "",
         is_generated: Boolean(transcriptData.is_generated),
-        total_items: (transcriptData.items || []).length
+        total_items: (transcriptData.items || []).length,
+        learner_id: activeLearnerId,
+        video_title: transcriptData.video_title || "",
+        segmentation_version: transcriptData.segmentation_version || "",
+        items: transcriptData.items || []
       })
     });
 
     const data = await response.json();
     if (response.ok && data.ok) {
       sessionId = data.session_id;
+      sentenceStartedAt = Date.now();
+      void logPracticeEvent("session_open", 0, "new");
     } else {
       console.warn("Could not create practice session:", data.error || data);
     }
@@ -968,6 +1073,8 @@ async function loadVideo(options) {
 
     items = data.items || [];
     videoId = data.video_id;
+    videoTitle = data.video_title || "";
+    segmentationVersion = data.segmentation_version || "";
     index = Math.max(
       0,
       Math.min(
@@ -995,6 +1102,8 @@ async function loadVideo(options) {
 
     if (options.reuseSessionId) {
       sessionId = Number(options.reuseSessionId);
+      sentenceStartedAt = Date.now();
+      void logPracticeEvent("session_open", 0, "resume_legacy");
     } else {
       await startPracticeSession(url, data);
     }
@@ -1031,16 +1140,46 @@ async function resumeFromQuery() {
     const session = data.session;
     document.getElementById("url").value = session.source_url;
 
-    await loadVideo({
-      reuseSessionId: session.id,
-      resumeIndex: session.resume_index
-    });
+    if (session.learner_id) {
+      await loadLearners(session.learner_id);
+    }
+
+    if (session.items && session.items.length) {
+      items = session.items;
+      videoId = session.video_id;
+      videoTitle = session.video_title || "";
+      segmentationVersion = session.segmentation_version || "";
+      sessionId = Number(session.id);
+      index = Math.max(
+        0,
+        Math.min(items.length - 1, Number(session.resume_index || 0))
+      );
+      reveal = false;
+      document.getElementById("lang").innerHTML =
+        '<span class="badge">' + (session.language || "字幕") + '</span>';
+      status.textContent =
+        "已从保存的练习快照恢复，第 " +
+        String(index + 1) + " / " + String(items.length) + " 句。";
+      resetForSentence();
+      void logPracticeEvent("session_open", 0, "resume_snapshot");
+      if (playerReady) player.cueVideoById(videoId);
+    } else {
+      await loadVideo({
+        reuseSessionId: session.id,
+        resumeIndex: session.resume_index
+      });
+    }
   } catch (error) {
     status.innerHTML =
       '<span class="error">' + String(error.message || error) + "</span>";
   }
 }
 
+document.getElementById("learnerSelect").addEventListener("change", function () {
+  activeLearnerId = Number(this.value || 0);
+  localStorage.setItem("mediaDictationLearnerId", String(activeLearnerId));
+});
+document.getElementById("addLearner").addEventListener("click", addLearner);
 document.getElementById("load").addEventListener("click", function () {
   loadVideo();
 });
@@ -1118,7 +1257,21 @@ window.addEventListener(
   true
 );
 
-resumeFromQuery();
+async function bootstrap() {
+  try {
+    await loadLearners();
+    await resumeFromQuery();
+  } catch (error) {
+    document.getElementById("status").innerHTML =
+      '<span class="error">' + String(error.message || error) + "</span>";
+  }
+}
+
+window.addEventListener("pagehide", function () {
+  flushSentenceTime();
+});
+
+bootstrap();
 
 window.onYouTubeIframeAPIReady = function () {
   player = new YT.Player("player", {
