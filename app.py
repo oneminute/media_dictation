@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hmac
 import os
+import secrets
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory, session
 from dotenv import load_dotenv
 
 import llm_service
@@ -70,6 +72,12 @@ from storage import (
 load_dotenv()
 
 app = Flask(__name__, static_folder="static")
+app.secret_key = (
+    os.getenv("MEDIA_DICTATION_SECRET_KEY", "").strip()
+    or secrets.token_hex(32)
+)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["MAX_CONTENT_LENGTH"] = max_upload_bytes()
 init_db()
 
@@ -85,6 +93,86 @@ def too_large(_error):
             ),
         }
     ), 413
+
+
+def configured_pin() -> str:
+    return os.getenv("MEDIA_DICTATION_PIN", "").strip()
+
+
+@app.before_request
+def require_household_pin():
+    pin = configured_pin()
+    if not pin:
+        return None
+
+    if request.endpoint == "login":
+        return None
+
+    if session.get("media_dictation_authenticated") is True:
+        return None
+
+    if request.path.startswith("/api/") or request.path.startswith("/media/"):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "需要先在浏览器登录 Media Dictation。",
+            }
+        ), 401
+
+    return redirect("/login")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    pin = configured_pin()
+    if not pin:
+        return redirect("/")
+
+    error = ""
+    if request.method == "POST":
+        supplied = str(request.form.get("pin", ""))
+        if hmac.compare_digest(supplied, pin):
+            session["media_dictation_authenticated"] = True
+            return redirect("/")
+        error = "PIN 不正确。"
+
+    error_html = (
+        f'<div class="error">{error}</div>'
+        if error
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Media Dictation 登录</title>
+<style>
+body{{margin:0;background:#f5f7fb;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033}}
+.card{{max-width:380px;margin:12vh auto;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:24px;box-shadow:0 8px 28px rgba(0,0,0,.08)}}
+h1{{font-size:24px;margin:0 0 8px}}p{{color:#667085}}input{{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:18px}}
+button{{width:100%;margin-top:12px;padding:12px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:700;font-size:16px;cursor:pointer}}
+.error{{color:#b42318;margin:10px 0}}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Media Dictation</h1>
+<p>请输入家庭访问 PIN。</p>
+{error_html}
+<form method="post">
+<input name="pin" type="password" autocomplete="current-password" autofocus>
+<button type="submit">进入</button>
+</form>
+</div>
+</body>
+</html>"""
+
+
+@app.get("/logout")
+def logout():
+    session.pop("media_dictation_authenticated", None)
+    return redirect("/login" if configured_pin() else "/")
 
 
 def request_learner_id() -> int:
@@ -201,6 +289,7 @@ def health():
             "ok": True,
             "proxy_mode": proxy_mode,
             "sqlite_enabled": True,
+            "pin_enabled": bool(configured_pin()),
             "schema_version": get_schema_version(),
             "segmentation_version": SEGMENTATION_VERSION,
             "whisper_available": whisper_available(),
