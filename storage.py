@@ -2045,6 +2045,354 @@ def export_learner_data(
     }
 
 
+
+def update_media_transcription(
+    media_id: str,
+    *,
+    status: str,
+    transcript: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    import json
+
+    transcript = transcript or {}
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE media_sources
+            SET transcription_status = ?,
+                transcript_json = ?,
+                language = ?,
+                duration = ?,
+                whisper_model = ?,
+                whisper_device = ?,
+                whisper_compute_type = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                str(status),
+                json.dumps(transcript, ensure_ascii=False) if transcript else "",
+                str(transcript.get("language", "")),
+                float(transcript.get("duration", 0) or 0),
+                str(transcript.get("whisper_model", "")),
+                str(transcript.get("whisper_device", "")),
+                str(transcript.get("whisper_compute_type", "")),
+                str(media_id),
+            ),
+        )
+    return get_media_source(str(media_id)) or {}
+
+
+def get_media_transcription(media_id: str) -> dict[str, Any] | None:
+    import json
+
+    source = get_media_source(media_id)
+    if source is None:
+        return None
+    raw = str(source.get("transcript_json") or "")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def list_media_sources(
+    learner_id: int | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    learner_id = _coerce_learner_id(learner_id)
+    limit = max(1, min(int(limit), 500))
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                ms.*,
+                COUNT(DISTINCT ps.id) AS session_count,
+                COALESCE(MAX(ps.updated_at), ms.updated_at, ms.created_at) AS last_used_at,
+                COALESCE(SUM(ps.completed_sentences), 0) AS completed_sentences,
+                COALESCE(SUM(ps.total_items), 0) AS total_items
+            FROM media_sources ms
+            LEFT JOIN practice_sessions ps
+              ON ps.media_id = ms.id
+             AND COALESCE(ps.learner_id, ?) = ?
+            WHERE COALESCE(ms.learner_id, ?) = ?
+            GROUP BY ms.id
+            ORDER BY last_used_at DESC, ms.created_at DESC
+            LIMIT ?
+            """,
+            (learner_id, learner_id, learner_id, learner_id, limit),
+        ).fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        total = int(row["total_items"] or 0)
+        completed = int(row["completed_sentences"] or 0)
+        result.append(
+            {
+                "id": row["id"],
+                "learner_id": int(row["learner_id"]) if row["learner_id"] is not None else None,
+                "original_name": row["original_name"],
+                "stored_filename": row["stored_filename"],
+                "mime_type": row["mime_type"],
+                "size_bytes": int(row["size_bytes"] or 0),
+                "title": row["title"],
+                "transcription_status": row["transcription_status"] or "pending",
+                "language": row["language"] or "",
+                "duration": float(row["duration"] or 0),
+                "whisper_model": row["whisper_model"] or "",
+                "whisper_device": row["whisper_device"] or "",
+                "whisper_compute_type": row["whisper_compute_type"] or "",
+                "session_count": int(row["session_count"] or 0),
+                "completed_sentences": completed,
+                "total_items": total,
+                "progress_percent": (
+                    round(completed * 100.0 / total, 1) if total else 0.0
+                ),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"] or row["created_at"],
+                "last_used_at": row["last_used_at"],
+            }
+        )
+    return result
+
+
+def rename_media_source(
+    media_id: str,
+    title: str,
+    learner_id: int | None = None,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+    cleaned = " ".join(str(title or "").strip().split())
+    if not cleaned:
+        raise ValueError("Title is required.")
+    if len(cleaned) > 300:
+        raise ValueError("Title is too long.")
+
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE media_sources
+            SET title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND COALESCE(learner_id, ?) = ?
+            """,
+            (cleaned, str(media_id), learner_id, learner_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Media source not found.")
+        conn.execute(
+            """
+            UPDATE practice_sessions
+            SET video_title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE media_id = ? AND COALESCE(learner_id, ?) = ?
+            """,
+            (cleaned, str(media_id), learner_id, learner_id),
+        )
+    return get_media_source(str(media_id)) or {}
+
+
+def delete_media_source(
+    media_id: str,
+    learner_id: int | None = None,
+    *,
+    delete_sessions: bool = False,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        source = conn.execute(
+            """
+            SELECT *
+            FROM media_sources
+            WHERE id = ? AND COALESCE(learner_id, ?) = ?
+            """,
+            (str(media_id), learner_id, learner_id),
+        ).fetchone()
+        if source is None:
+            raise ValueError("Media source not found.")
+
+        count_row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM practice_sessions
+            WHERE media_id = ? AND COALESCE(learner_id, ?) = ?
+            """,
+            (str(media_id), learner_id, learner_id),
+        ).fetchone()
+        session_count = int(count_row["count"] or 0)
+
+        if session_count and not delete_sessions:
+            raise ValueError(
+                f"该媒体仍有 {session_count} 个练习记录。请确认同时删除关联练习。"
+            )
+
+        if delete_sessions:
+            conn.execute(
+                """
+                DELETE FROM practice_sessions
+                WHERE media_id = ? AND COALESCE(learner_id, ?) = ?
+                """,
+                (str(media_id), learner_id, learner_id),
+            )
+
+        conn.execute("DELETE FROM media_sources WHERE id = ?", (str(media_id),))
+
+    return {
+        "id": str(media_id),
+        "stored_filename": source["stored_filename"],
+        "session_count": session_count,
+    }
+
+
+def create_transcription_job(
+    job_id: str,
+    media_id: str,
+    learner_id: int | None = None,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcription_jobs (
+                id, media_id, learner_id, status, progress, stage, detail
+            )
+            VALUES (?, ?, ?, 'queued', 0, 'queued', 'Waiting for Whisper worker')
+            """,
+            (str(job_id), str(media_id), learner_id),
+        )
+        conn.execute(
+            """
+            UPDATE media_sources
+            SET transcription_status = 'queued', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (str(media_id),),
+        )
+    return get_transcription_job(str(job_id)) or {}
+
+
+def update_transcription_job(
+    job_id: str,
+    *,
+    status: str | None = None,
+    progress: int | None = None,
+    stage: str | None = None,
+    detail: str | None = None,
+    error: str | None = None,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    import json
+
+    fields = ["updated_at = CURRENT_TIMESTAMP"]
+    params: list[Any] = []
+    if status is not None:
+        fields.append("status = ?")
+        params.append(str(status))
+        if status == "running":
+            fields.append("started_at = COALESCE(started_at, CURRENT_TIMESTAMP)")
+        if status in {"completed", "failed", "interrupted"}:
+            fields.append("finished_at = CURRENT_TIMESTAMP")
+    if progress is not None:
+        fields.append("progress = ?")
+        params.append(max(0, min(100, int(progress))))
+    if stage is not None:
+        fields.append("stage = ?")
+        params.append(str(stage)[:100])
+    if detail is not None:
+        fields.append("detail = ?")
+        params.append(str(detail)[:1000])
+    if error is not None:
+        fields.append("error = ?")
+        params.append(str(error)[:3000])
+    if result is not None:
+        fields.append("result_json = ?")
+        params.append(json.dumps(result, ensure_ascii=False))
+
+    params.append(str(job_id))
+    with connect() as conn:
+        cursor = conn.execute(
+            "UPDATE transcription_jobs SET "
+            + ", ".join(fields)
+            + " WHERE id = ?",
+            tuple(params),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Transcription job not found.")
+
+        row = conn.execute(
+            "SELECT media_id FROM transcription_jobs WHERE id = ?",
+            (str(job_id),),
+        ).fetchone()
+        if row is not None and status is not None:
+            media_status = {
+                "queued": "queued",
+                "running": "transcribing",
+                "completed": "ready",
+                "failed": "failed",
+                "interrupted": "interrupted",
+            }.get(status, status)
+            conn.execute(
+                """
+                UPDATE media_sources
+                SET transcription_status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (media_status, row["media_id"]),
+            )
+
+    return get_transcription_job(str(job_id)) or {}
+
+
+def get_transcription_job(job_id: str) -> dict[str, Any] | None:
+    import json
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM transcription_jobs WHERE id = ?",
+            (str(job_id),),
+        ).fetchone()
+    if row is None:
+        return None
+
+    result: dict[str, Any] = {}
+    if row["result_json"]:
+        try:
+            result = json.loads(row["result_json"])
+        except json.JSONDecodeError:
+            result = {}
+
+    return {
+        "id": row["id"],
+        "media_id": row["media_id"],
+        "learner_id": int(row["learner_id"]),
+        "status": row["status"],
+        "progress": int(row["progress"] or 0),
+        "stage": row["stage"],
+        "detail": row["detail"],
+        "error": row["error"],
+        "result": result,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+    }
+
+
+def latest_transcription_job(media_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM transcription_jobs
+            WHERE media_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (str(media_id),),
+        ).fetchone()
+    return get_transcription_job(row["id"]) if row is not None else None
+
+
 def get_stats() -> dict[str, Any]:
     with connect() as conn:
         summary = conn.execute(
