@@ -1017,6 +1017,17 @@ def fetch_best_transcript(video_id: str):
     }
 
 
+def request_learner_id() -> int:
+    raw = request.args.get("learner_id")
+    if raw is None and request.is_json:
+        payload = request.get_json(silent=True) or {}
+        raw = payload.get("learner_id")
+    try:
+        return int(raw) if raw is not None else get_default_learner_id()
+    except (TypeError, ValueError):
+        return get_default_learner_id()
+
+
 @app.get("/")
 def index():
     return send_from_directory("static", "index.html")
@@ -1025,6 +1036,11 @@ def index():
 @app.get("/learning")
 def learning_center():
     return send_from_directory("static", "learning.html")
+
+
+@app.get("/review")
+def review_center():
+    return send_from_directory("static", "review.html")
 
 
 @app.get("/api/health")
@@ -1039,6 +1055,8 @@ def health():
             "ok": True,
             "proxy_mode": proxy_mode,
             "sqlite_enabled": True,
+            "schema_version": get_schema_version(),
+            "segmentation_version": SEGMENTATION_VERSION,
             "llm_provider": provider,
             "translation_enabled": (
                 local_ready
@@ -1056,10 +1074,18 @@ def health():
                 "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
                 60.0,
             ),
+            "ollama_auto_translation_timeout_seconds": ollama_timeout_seconds(
+                "OLLAMA_AUTO_TRANSLATION_TIMEOUT_SECONDS",
+                12.0,
+            ),
             "ollama_word_model": ollama_model("OLLAMA_WORD_MODEL"),
             "ollama_word_timeout_seconds": ollama_timeout_seconds(
                 "OLLAMA_WORD_TIMEOUT_SECONDS",
                 45.0,
+            ),
+            "ollama_auto_word_timeout_seconds": ollama_timeout_seconds(
+                "OLLAMA_AUTO_WORD_TIMEOUT_SECONDS",
+                7.0,
             ),
             "openai_enabled": openai_ready,
             "openai_translation_model": os.getenv(
@@ -1070,10 +1096,6 @@ def health():
                 "OPENAI_TRANSLATION_SERVICE_TIER",
                 "flex",
             ),
-            "openai_translation_timeout_seconds": openai_timeout_seconds(
-                "OPENAI_TRANSLATION_TIMEOUT_SECONDS",
-                45.0,
-            ),
             "openai_word_model": os.getenv(
                 "OPENAI_WORD_MODEL",
                 "gpt-5.6-luna",
@@ -1082,33 +1104,43 @@ def health():
                 "OPENAI_WORD_SERVICE_TIER",
                 "default",
             ),
-            "openai_word_timeout_seconds": openai_timeout_seconds(
-                "OPENAI_WORD_TIMEOUT_SECONDS",
-                15.0,
-            ),
         }
     )
+
+
+@app.get("/api/learners")
+def learners_list():
+    return jsonify(
+        {
+            "ok": True,
+            "learners": list_learners(),
+            "default_learner_id": get_default_learner_id(),
+        }
+    )
+
+
+@app.post("/api/learners")
+def learner_create():
+    payload = request.get_json(silent=True) or {}
+    try:
+        learner = create_learner(str(payload.get("name", "")))
+        return jsonify({"ok": True, "learner": learner})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"创建学习者失败：{exc}"}), 400
 
 
 @app.post("/api/session")
 def start_session():
     payload = request.get_json(silent=True) or {}
-
     video_id = str(payload.get("video_id", "")).strip()
     source_url = str(payload.get("source_url", "")).strip()
     language = str(payload.get("language", "")).strip()
-    total_items = payload.get("total_items", 0)
+    items = payload.get("items") or []
 
     if not video_id or not source_url:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "缺少 video_id 或 source_url。",
-                }
-            ),
-            400,
-        )
+        return jsonify({"ok": False, "error": "缺少 video_id 或 source_url。"}), 400
+    if not isinstance(items, list):
+        return jsonify({"ok": False, "error": "items 必须是数组。"}), 400
 
     try:
         session_id = create_session(
@@ -1116,7 +1148,13 @@ def start_session():
             source_url=source_url,
             language=language,
             is_generated=bool(payload.get("is_generated", False)),
-            total_items=int(total_items or 0),
+            total_items=int(payload.get("total_items", 0) or 0),
+            learner_id=payload.get("learner_id"),
+            video_title=str(payload.get("video_title", "")).strip(),
+            items=items,
+            segmentation_version=str(
+                payload.get("segmentation_version", SEGMENTATION_VERSION)
+            ),
         )
         return jsonify({"ok": True, "session_id": session_id})
     except Exception as exc:
@@ -1126,7 +1164,6 @@ def start_session():
 @app.post("/api/attempt")
 def save_attempt():
     payload = request.get_json(silent=True) or {}
-
     try:
         session_id = int(payload.get("session_id"))
         sentence_index = int(payload.get("sentence_index", 0))
@@ -1134,11 +1171,6 @@ def save_attempt():
         return jsonify({"ok": False, "error": "无效的 session_id。"}), 400
 
     sentence_text = str(payload.get("sentence_text", "")).strip()
-    answer_before = str(payload.get("answer_before", ""))
-    event_type = str(payload.get("event_type", "")).strip()
-    wrong_word = payload.get("wrong_word")
-    correct_word = payload.get("correct_word")
-
     if not sentence_text:
         return jsonify({"ok": False, "error": "缺少 sentence_text。"}), 400
 
@@ -1147,14 +1179,42 @@ def save_attempt():
             session_id=session_id,
             sentence_index=sentence_index,
             sentence_text=sentence_text,
-            answer_before=answer_before,
-            event_type=event_type,
-            wrong_word=str(wrong_word) if wrong_word is not None else None,
-            correct_word=str(correct_word) if correct_word is not None else None,
+            answer_before=str(payload.get("answer_before", "")),
+            event_type=str(payload.get("event_type", "")).strip(),
+            wrong_word=(
+                str(payload.get("wrong_word"))
+                if payload.get("wrong_word") is not None
+                else None
+            ),
+            correct_word=(
+                str(payload.get("correct_word"))
+                if payload.get("correct_word") is not None
+                else None
+            ),
         )
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"ok": False, "error": f"保存听写记录失败：{exc}"}), 500
+
+
+@app.post("/api/event")
+def save_practice_event():
+    payload = request.get_json(silent=True) or {}
+    try:
+        record_practice_event(
+            session_id=int(payload.get("session_id")),
+            sentence_index=(
+                None
+                if payload.get("sentence_index") is None
+                else int(payload.get("sentence_index"))
+            ),
+            event_type=str(payload.get("event_type", "")).strip(),
+            value_ms=int(payload.get("value_ms", 0) or 0),
+            detail=str(payload.get("detail", "")),
+        )
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"保存练习事件失败：{exc}"}), 400
 
 
 @app.get("/api/stats")
@@ -1168,11 +1228,13 @@ def history():
         limit = int(request.args.get("limit", "50"))
     except ValueError:
         limit = 50
-
     return jsonify(
         {
             "ok": True,
-            "sessions": get_session_history(limit=limit),
+            "sessions": get_session_history(
+                limit=limit,
+                learner_id=request_learner_id(),
+            ),
         }
     )
 
@@ -1182,13 +1244,34 @@ def session_detail(session_id: int):
     result = get_session_detail(session_id)
     if result is None:
         return jsonify({"ok": False, "error": "没有找到这条练习记录。"}), 404
-
     return jsonify({"ok": True, "session": result})
 
 
 @app.get("/api/report")
 def report():
-    return jsonify({"ok": True, **get_learning_report()})
+    return jsonify(
+        {
+            "ok": True,
+            **get_learning_report(learner_id=request_learner_id()),
+        }
+    )
+
+
+@app.get("/api/review-sentences")
+def review_sentences():
+    try:
+        limit = int(request.args.get("limit", "30"))
+    except ValueError:
+        limit = 30
+    return jsonify(
+        {
+            "ok": True,
+            "items": get_review_sentences(
+                learner_id=request_learner_id(),
+                limit=limit,
+            ),
+        }
+    )
 
 
 @app.post("/api/word-lookup")
@@ -1196,45 +1279,55 @@ def word_lookup():
     payload = request.get_json(silent=True) or {}
     display_word = str(payload.get("word", "")).strip()
     context_sentence = str(payload.get("context", "")).strip()
-
     normalized_word = normalize_lookup_word(display_word)
+
     if not normalized_word:
         return jsonify({"ok": False, "error": "没有可查询的单词。"}), 400
-
     if not context_sentence:
         return jsonify({"ok": False, "error": "缺少当前句子的语境。"}), 400
-
     if len(display_word) > 100 or len(context_sentence) > 2000:
         return jsonify({"ok": False, "error": "查询内容过长。"}), 400
 
-    cached = get_word_translation(normalized_word, context_sentence)
-    if cached is not None:
-        return jsonify(
-            {
-                "ok": True,
-                "word": display_word,
-                "normalized_word": normalized_word,
-                "translation": cached["translation"],
-                "model": cached["model"],
-                "service_tier": cached_service_tier(
-                    cached["model"],
-                    word=True,
-                ),
-                "cached": True,
-            }
+    for provider, model in cache_candidates(word=True):
+        cached = get_word_translation(
+            normalized_word,
+            context_sentence,
+            provider=provider,
+            model=model,
+            prompt_version=WORD_PROMPT_VERSION,
         )
+        if cached is not None:
+            label = f"ollama:{model}" if provider == "ollama" else model
+            return jsonify(
+                {
+                    "ok": True,
+                    "word": display_word,
+                    "normalized_word": normalized_word,
+                    "translation": cached["translation"],
+                    "model": label,
+                    "provider": provider,
+                    "service_tier": cached.get("service_tier") or (
+                        "local" if provider == "ollama" else "default"
+                    ),
+                    "cached": True,
+                }
+            )
 
     try:
-        translation, model, actual_tier = translate_word_in_context(
+        translation, model_label, actual_tier = translate_word_in_context(
             display_word,
             context_sentence,
         )
+        provider, raw_model = result_identity(model_label)
         save_word_translation(
             normalized_word=normalized_word,
             display_word=display_word,
             context_sentence=context_sentence,
             translation=translation,
-            model=model,
+            model=raw_model,
+            provider=provider,
+            service_tier=actual_tier,
+            prompt_version=WORD_PROMPT_VERSION,
         )
         return jsonify(
             {
@@ -1242,7 +1335,8 @@ def word_lookup():
                 "word": display_word,
                 "normalized_word": normalized_word,
                 "translation": translation,
-                "model": model,
+                "model": model_label,
+                "provider": provider,
                 "service_tier": actual_tier,
                 "cached": False,
             }
@@ -1257,126 +1351,131 @@ def vocabulary_list():
         limit = int(request.args.get("limit", "200"))
     except ValueError:
         limit = 200
-
-    return jsonify({"ok": True, "items": get_vocabulary(limit=limit)})
+    due_only = request.args.get("due", "").lower() in {"1", "true", "yes"}
+    return jsonify(
+        {
+            "ok": True,
+            "items": get_vocabulary(
+                limit=limit,
+                learner_id=request_learner_id(),
+                due_only=due_only,
+            ),
+        }
+    )
 
 
 @app.post("/api/vocabulary")
 def vocabulary_add():
     payload = request.get_json(silent=True) or {}
-
     display_word = str(payload.get("word", "")).strip()
     normalized_word = normalize_lookup_word(display_word)
     translation = str(payload.get("translation", "")).strip()
-    context_sentence = str(payload.get("context", "")).strip()
-    video_id = str(payload.get("video_id", "")).strip() or None
-    source_url = str(payload.get("source_url", "")).strip() or None
 
     if not normalized_word or not translation:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "缺少单词或中文释义。",
-                }
-            ),
-            400,
-        )
+        return jsonify({"ok": False, "error": "缺少单词或中文释义。"}), 400
 
     try:
         item = add_vocabulary_word(
             normalized_word=normalized_word,
             display_word=display_word,
             translation=translation,
-            context_sentence=context_sentence,
-            video_id=video_id,
-            source_url=source_url,
+            context_sentence=str(payload.get("context", "")).strip(),
+            video_id=str(payload.get("video_id", "")).strip() or None,
+            source_url=str(payload.get("source_url", "")).strip() or None,
+            learner_id=payload.get("learner_id"),
+            session_id=payload.get("session_id"),
+            sentence_index=payload.get("sentence_index"),
         )
         return jsonify({"ok": True, "item": item})
     except Exception as exc:
         return jsonify({"ok": False, "error": f"加入生词本失败：{exc}"}), 500
 
 
+@app.post("/api/vocabulary/<int:entry_id>/review")
+def vocabulary_review(entry_id: int):
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = review_vocabulary(entry_id, str(payload.get("rating", "")))
+        return jsonify({"ok": True, "item": item})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"更新复习计划失败：{exc}"}), 400
+
+
 @app.post("/api/translate")
 def translate():
     payload = request.get_json(silent=True) or {}
-    text = str(payload.get("text", "")).strip()
-
-    if not text:
+    source_text = str(payload.get("text", "")).strip()
+    if not source_text:
         return jsonify({"ok": False, "error": "没有可翻译的英文句子。"}), 400
-
-    if len(text) > 2000:
+    if len(source_text) > 2000:
         return jsonify({"ok": False, "error": "当前句子过长，无法翻译。"}), 400
 
-    try:
-        cached = get_translation(text)
+    for provider, model in cache_candidates(word=False):
+        cached = get_translation(
+            source_text,
+            provider=provider,
+            model=model,
+            prompt_version=SENTENCE_PROMPT_VERSION,
+        )
         if cached is not None:
+            label = f"ollama:{model}" if provider == "ollama" else model
             return jsonify(
                 {
                     "ok": True,
                     "translation": cached["translation"],
-                    "model": cached["model"],
-                    "service_tier": cached_service_tier(
-                        cached["model"],
-                        word=False,
+                    "model": label,
+                    "provider": provider,
+                    "service_tier": cached.get("service_tier") or (
+                        "local" if provider == "ollama" else "default"
                     ),
                     "cached": True,
                 }
             )
 
-        translation, model, actual_tier = translate_to_chinese(text)
+    try:
+        translation, model_label, actual_tier = translate_to_chinese(source_text)
+        provider, raw_model = result_identity(model_label)
         save_translation(
-            source_text=text,
+            source_text=source_text,
             translation=translation,
-            model=model,
+            model=raw_model,
+            provider=provider,
+            service_tier=actual_tier,
+            prompt_version=SENTENCE_PROMPT_VERSION,
         )
-
         return jsonify(
             {
                 "ok": True,
                 "translation": translation,
-                "model": model,
+                "model": model_label,
+                "provider": provider,
                 "service_tier": actual_tier,
                 "cached": False,
             }
         )
     except Exception as exc:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": f"翻译失败：{exc}",
-                }
-            ),
-            500,
-        )
+        return jsonify({"ok": False, "error": f"翻译失败：{exc}"}), 500
 
 
 @app.get("/api/transcript")
 def transcript():
     value = request.args.get("url", "")
     video_id = extract_video_id(value)
-
     if not video_id:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "无法识别 YouTube 链接或 Video ID。",
-                }
-            ),
-            400,
-        )
+        return jsonify(
+            {"ok": False, "error": "无法识别 YouTube 链接或 Video ID。"}
+        ), 400
 
     try:
         result = fetch_best_transcript(video_id)
         if not result["items"]:
             raise RuntimeError("The transcript contains no usable spoken captions.")
-
         return jsonify(
             {
                 "ok": True,
                 "video_id": video_id,
+                "video_title": fetch_video_title(video_id),
+                "segmentation_version": SEGMENTATION_VERSION,
                 **result,
             }
         )
@@ -1387,13 +1486,10 @@ def transcript():
             or "requestblocked" in message.lower()
             or "ipblocked" in message.lower()
         )
-
         if blocked:
             error = (
                 "YouTube 已阻止当前服务器 IP。视频本身可能有字幕；"
-                "GitHub Codespaces 等云服务器的出口 IP 经常被 YouTube 屏蔽。\n\n"
-                "本地运行通常可以直接使用。若要在 Codespaces 中自动获取字幕，"
-                "请配置住宅代理 Secret（推荐）或通用 HTTP/HTTPS 代理。\n\n"
+                "本地运行通常可以直接使用。若在云服务器运行，请配置住宅代理。\n\n"
                 f"{message}"
             )
         else:
@@ -1402,7 +1498,6 @@ def transcript():
                 "或者 YouTube 暂时阻止了字幕请求。\n\n"
                 f"{message}"
             )
-
         return jsonify({"ok": False, "error": error}), 500
 
 
