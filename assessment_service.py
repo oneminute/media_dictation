@@ -169,8 +169,7 @@ def summarize_responses(
             by_level[level].append(response)
 
     level_stats: dict[str, dict[str, Any]] = {}
-    highest = "Below A2"
-    passed_levels: list[str] = []
+    pass_map: dict[str, bool] = {}
 
     for level in _LEVELS:
         group = by_level[level]
@@ -179,7 +178,9 @@ def summarize_responses(
                 "average_accuracy": None,
                 "passed_items": 0,
                 "items": 0,
+                "passed": False,
             }
+            pass_map[level] = False
             continue
 
         adjusted_values = [
@@ -194,20 +195,24 @@ def summarize_responses(
         avg = sum(adjusted_values) / len(adjusted_values)
         passed_items = sum(1 for value in adjusted_values if value >= 0.70)
         level_pass = avg >= 0.74 and passed_items >= 2
-
+        pass_map[level] = level_pass
         level_stats[level] = {
             "average_accuracy": round(avg * 100, 1),
             "passed_items": passed_items,
             "items": len(group),
             "passed": level_pass,
         }
-        if level_pass:
-            highest = level
-            passed_levels.append(level)
-        else:
-            # CEFR levels are cumulative for this screen. Do not skip a failed
-            # lower band and assign a higher one from a lucky item set.
+
+    # The estimated band is cumulative: a higher band cannot compensate for a
+    # missed lower band. Still report all four bands so the learner can see the
+    # full profile.
+    highest = "Below A2"
+    passed_levels: list[str] = []
+    for level in _LEVELS:
+        if not pass_map.get(level, False):
             break
+        highest = level
+        passed_levels.append(level)
 
     total = len(responses)
     all_adjusted = [
