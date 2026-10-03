@@ -362,7 +362,11 @@ def word_lookup():
     if len(display_word) > 100 or len(context_sentence) > 2000:
         return jsonify({"ok": False, "error": "查询内容过长。"}), 400
 
-    for provider, model in cache_candidates(word=True):
+    provider_override = payload.get("provider")
+    for provider, model in cache_candidates(
+        word=True,
+        provider_override=provider_override,
+    ):
         cached = get_word_translation(
             normalized_word,
             context_sentence,
@@ -391,6 +395,7 @@ def word_lookup():
         translation, model_label, actual_tier = translate_word_in_context(
             display_word,
             context_sentence,
+            provider_override=provider_override,
         )
         provider, raw_model = result_identity(model_label)
         save_word_translation(
@@ -484,7 +489,11 @@ def translate():
     if len(source_text) > 2000:
         return jsonify({"ok": False, "error": "当前句子过长，无法翻译。"}), 400
 
-    for provider, model in cache_candidates(word=False):
+    provider_override = payload.get("provider")
+    for provider, model in cache_candidates(
+        word=False,
+        provider_override=provider_override,
+    ):
         cached = get_translation(
             source_text,
             provider=provider,
@@ -507,7 +516,10 @@ def translate():
             )
 
     try:
-        translation, model_label, actual_tier = translate_to_chinese(source_text)
+        translation, model_label, actual_tier = translate_to_chinese(
+            source_text,
+            provider_override=provider_override,
+        )
         provider, raw_model = result_identity(model_label)
         save_translation(
             source_text=source_text,
