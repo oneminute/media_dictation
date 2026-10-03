@@ -13,7 +13,7 @@ A local web app for sentence-by-sentence YouTube dictation practice.
 - Press Enter to correct only the first current error; other typed text stays in place.
 - Detect substitutions, missing words, and extra words using sequence alignment.
 - A fully correct sentence stays on the current sentence instead of auto-advancing.
-- Optional on-demand Simplified Chinese translation through the OpenAI Responses API.
+- On-demand Simplified Chinese translation through local Ollama/Qwen, OpenAI, or automatic local-first fallback.
 - Click any word in the revealed source sentence to get a context-aware Chinese meaning.
 - Save looked-up words into a persistent SQLite vocabulary book with their source sentence.
 - Lightweight local SQLite history for sessions, dictation attempts, errors, progress, translations, word lookups, and vocabulary.
@@ -122,7 +122,7 @@ After you reveal the source sentence, every word is clickable.
 Clicking a word:
 
 1. sends the word together with the current sentence to the local Flask backend;
-2. asks the configured low-cost OpenAI model for the word's concise Chinese meaning **in that sentence**;
+2. asks the configured LLM provider (local Ollama/Qwen or OpenAI) for the word's concise Chinese meaning **in that sentence**;
 3. caches the result in SQLite so the same word in the same sentence does not call the API again;
 4. shows an **加入生词本** button.
 
@@ -168,9 +168,55 @@ http://127.0.0.1:8765/api/stats
 
 It reports total sessions, completed sentences, recorded errors, and cached translations.
 
+## Local Ollama / Qwen provider
+
+Media Dictation can use a local Ollama model, OpenAI, or both with automatic fallback.
+
+Recommended configuration for the local Qwen model used on the Windows server:
+
+```env
+LLM_PROVIDER=auto
+
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_TRANSLATION_MODEL=hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
+OLLAMA_TRANSLATION_TIMEOUT_SECONDS=60
+OLLAMA_WORD_MODEL=hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
+OLLAMA_WORD_TIMEOUT_SECONDS=45
+```
+
+Provider modes:
+
+- `LLM_PROVIDER=auto`: try the local Ollama model first; if Ollama is unavailable or the local request fails, fall back to OpenAI.
+- `LLM_PROVIDER=ollama`: local-only mode. OpenAI is never called.
+- `LLM_PROVIDER=openai`: cloud-only mode. Ollama is not called.
+
+The application talks only to `127.0.0.1:11434` by default. Ollama does **not** need to be exposed to the LAN. The child's browser connects to Media Dictation on port `8765`; the Media Dictation server then calls Ollama locally.
+
+For Qwen-family models the Ollama request uses non-thinking mode and a deterministic low-temperature response. The model is kept warm for 10 minutes after a request to reduce repeated model-load latency.
+
+Check provider status at:
+
+```
+http://127.0.0.1:8765/api/health
+```
+
+Important fields include:
+
+```json
+{
+  "llm_provider": "auto",
+  "ollama_available": true,
+  "ollama_base_url": "http://127.0.0.1:11434",
+  "ollama_translation_model": "hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+  "openai_enabled": true
+}
+```
+
+Translation and word-lookup results show the actual source in the UI. Local responses are labeled with the Ollama model and `local`; OpenAI responses show the OpenAI model and service tier.
+
 ## Optional OpenAI Chinese translation
 
-Translation is **on demand**. The app calls the OpenAI API only when you click **中文翻译** for the current sentence.
+Translation is **on demand**. When `LLM_PROVIDER=auto`, the app tries local Ollama first and calls OpenAI only if the local request fails.
 
 The API key stays in the Flask backend and is never sent to browser JavaScript.
 
