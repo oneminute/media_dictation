@@ -162,7 +162,10 @@ def _device_candidates() -> list[tuple[str, str]]:
     return [("cuda", cuda_compute), ("cpu", cpu_compute)]
 
 
-def transcribe_media(path: Path) -> dict[str, Any]:
+def transcribe_media(
+    path: Path,
+    progress_callback=None,
+) -> dict[str, Any]:
     try:
         from faster_whisper import WhisperModel
     except Exception as exc:
@@ -174,9 +177,24 @@ def transcribe_media(path: Path) -> dict[str, Any]:
     language = os.getenv("WHISPER_LANGUAGE", "en").strip() or "en"
     last_error: Exception | None = None
 
+    def report(progress: int, stage: str, detail: str = "") -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(max(0, min(100, int(progress))), stage, detail)
+        except Exception:
+            pass
+
+    report(2, "preparing", "Preparing Whisper transcription")
+
     for device, compute_type in _device_candidates():
         model = None
         try:
+            report(
+                5,
+                "loading_model",
+                f"Loading {model_name} on {device} ({compute_type})",
+            )
             download_root = os.getenv("WHISPER_DOWNLOAD_ROOT", "").strip()
             model_kwargs = {
                 "device": device,
@@ -190,6 +208,7 @@ def transcribe_media(path: Path) -> dict[str, Any]:
                 model_name,
                 **model_kwargs,
             )
+            report(12, "transcribing", "Whisper model loaded")
             segments, info = model.transcribe(
                 str(path),
                 language=language,
@@ -199,13 +218,26 @@ def transcribe_media(path: Path) -> dict[str, Any]:
                 condition_on_previous_text=False,
             )
 
-            # faster-whisper returns a generator; consume it while the model is alive.
-            segment_list = list(segments)
+            duration = float(getattr(info, "duration", 0) or 0)
+            segment_list = []
+            for segment in segments:
+                segment_list.append(segment)
+                if duration > 0:
+                    segment_end = float(getattr(segment, "end", 0) or 0)
+                    fraction = max(0.0, min(1.0, segment_end / duration))
+                    report(
+                        12 + int(fraction * 76),
+                        "transcribing",
+                        f"Transcribing {fraction * 100:.0f}%",
+                    )
+
+            report(90, "segmenting", "Building dictation phrases")
             items = whisper_segments_to_practice_items(segment_list)
             if not items:
                 raise RuntimeError("Whisper 没有产生可用于听写的英文内容。")
 
-            return {
+            report(98, "finalizing", "Finalizing transcript")
+            result = {
                 "items": items,
                 "language": getattr(info, "language", language) or language,
                 "duration": float(getattr(info, "duration", 0) or 0),
@@ -213,6 +245,8 @@ def transcribe_media(path: Path) -> dict[str, Any]:
                 "whisper_device": device,
                 "whisper_compute_type": compute_type,
             }
+            report(100, "completed", "Transcription complete")
+            return result
         except Exception as exc:
             last_error = exc
             if os.getenv("WHISPER_DEVICE", "auto").strip().lower() in {
