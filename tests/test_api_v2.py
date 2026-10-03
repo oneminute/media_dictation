@@ -20,6 +20,31 @@ class ApiTests(unittest.TestCase):
         app.app.config.update(TESTING=True)
         cls.client = app.app.test_client()
 
+    def test_optional_household_pin(self):
+        with patch.dict(
+            os.environ,
+            {"MEDIA_DICTATION_PIN": "2468"},
+            clear=False,
+        ):
+            client = app.app.test_client()
+            blocked = client.get("/")
+            self.assertEqual(blocked.status_code, 302)
+            self.assertTrue(blocked.location.endswith("/login"))
+
+            api_blocked = client.get("/api/health")
+            self.assertEqual(api_blocked.status_code, 401)
+
+            wrong = client.post("/login", data={"pin": "1111"})
+            self.assertEqual(wrong.status_code, 200)
+            self.assertIn("PIN", wrong.get_data(as_text=True))
+
+            good = client.post("/login", data={"pin": "2468"})
+            self.assertEqual(good.status_code, 302)
+
+            allowed = client.get("/api/health")
+            self.assertEqual(allowed.status_code, 200)
+            self.assertTrue(allowed.get_json()["pin_enabled"])
+
     def test_health_exposes_schema_and_provider(self):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
