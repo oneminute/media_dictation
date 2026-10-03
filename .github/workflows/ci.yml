@@ -23,3 +23,43 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Check inline JavaScript
         run: python tools/check_inline_js.py
+
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install Python dependencies
+        run: python -m pip install -U pip && python -m pip install -r requirements.txt
+      - name: Install Playwright
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Start test server
+        env:
+          MEDIA_DICTATION_DB: /tmp/media_dictation_e2e.db
+          MEDIA_DICTATION_MEDIA_DIR: /tmp/media_dictation_media
+          LLM_PROVIDER: ollama
+        run: |
+          python app.py >/tmp/media_dictation_server.log 2>&1 &
+          echo $! >/tmp/media_dictation_server.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8765/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/media_dictation_server.log
+          exit 1
+      - name: Run Playwright E2E
+        run: npx playwright test
+      - name: Show server log on failure
+        if: failure()
+        run: cat /tmp/media_dictation_server.log || true
