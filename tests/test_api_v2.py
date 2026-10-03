@@ -82,6 +82,25 @@ class ApiTests(unittest.TestCase):
         self.assertIn("sessions", data)
         self.assertIn("vocabulary", data)
 
+    def test_translate_honors_provider_override(self):
+        with patch.object(app, "cache_candidates", return_value=[]), patch.object(
+            app,
+            "translate_to_chinese",
+            return_value=("本地指定结果", "ollama:test-model", "local"),
+        ) as translate_mock:
+            response = self.client.post(
+                "/api/translate",
+                json={"text": "provider override unique", "provider": "ollama"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["provider"], "ollama")
+        translate_mock.assert_called_once_with(
+            "provider override unique",
+            provider_override="ollama",
+        )
+
     def test_auto_router_falls_back_to_openai(self):
         with patch.object(llm_service, "llm_provider", return_value="auto"), patch.object(
             llm_service,
