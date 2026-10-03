@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>错句复习 · Media Dictation</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5e7eb;--primary:#2563eb;--ok:#15803d;--bad:#b42318}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:980px;margin:auto;padding:22px}.header,.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header{justify-content:space-between;margin-bottom:18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px}h1{margin:0;font-size:28px}.sub,.meta{color:var(--muted)}.sub{margin-top:5px}.meta{font-size:13px}
+a,button{border:0;border-radius:9px;padding:9px 12px;font-weight:700;text-decoration:none;cursor:pointer}a{background:#e8efff;color:#1749b3}button{background:#e5e7eb}button.primary{background:var(--primary);color:#fff}
+select{padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff}
+#player{width:100%;aspect-ratio:16/9;background:#111;border-radius:12px;overflow:hidden}
+.source{margin:14px 0;padding:14px;border:1px dashed #cbd5e1;border-radius:12px;font-size:20px;line-height:1.55;text-align:center;background:#f8fafc}
+.hidden{filter:blur(7px);user-select:none}.answer{width:100%;min-height:110px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:17px}
+.feedback{min-height:25px;margin-top:10px}.ok{color:var(--ok);font-weight:700}.bad{color:var(--bad);font-weight:700}
+.progress{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin:10px 0}.bar{height:100%;background:var(--primary)}
+.empty{text-align:center;color:var(--muted);padding:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div><h1>错句复习</h1><div class="sub">按历史错误次数优先重新听写</div></div>
+    <div class="row"><select id="learner"></select><a href="/learning">学习中心</a><a href="/">主练习</a></div>
+  </div>
+  <div class="card">
+    <div id="meta" class="meta">正在读取…</div>
+    <div class="progress"><div id="bar" class="bar"></div></div>
+    <div id="player"></div>
+    <div id="source" class="source hidden">暂无句子</div>
+    <div class="row">
+      <button id="play" class="primary">▶ 重播</button>
+      <button id="prev">← 上一句</button>
+      <button id="next">下一句 →</button>
+      <button id="show">显示/隐藏原文</button>
+    </div>
+    <textarea id="answer" class="answer" placeholder="重新听写这个错句…" spellcheck="false"></textarea>
+    <div class="row"><button id="check">Check</button></div>
+    <div id="feedback" class="feedback"></div>
+  </div>
+</div>
+<script>
+let player=null,ready=false,items=[],index=0,reveal=false,stopTimer=null,learnerId=null;
+
+function tokens(text){
+  const out=[];const re=/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu;let m;
+  while((m=re.exec(text))!==null){out.push(m[0].normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,""))}
+  return out;
+}
+function equalAnswer(a,b){const x=tokens(a),y=tokens(b);return x.length===y.length&&x.every((v,i)=>v===y[i])}
+async function loadLearners(){
+  const r=await fetch("/api/learners"),d=await r.json();const s=document.getElementById("learner");s.textContent="";
+  const stored=Number(localStorage.getItem("mediaDictationLearnerId")||d.default_learner_id||0);
+  (d.learners||[]).forEach(x=>{const o=document.createElement("option");o.value=x.id;o.textContent=x.name;s.appendChild(o)});
+  learnerId=stored;s.value=String(learnerId);
+}
+async function loadItems(){
+  const r=await fetch("/api/review-sentences?learner_id="+encodeURIComponent(learnerId)+"&limit=50"),d=await r.json();
+  items=d.items||[];index=0;render();
+}
+function render(){
+  if(!items.length){document.getElementById("meta").textContent="暂无错句记录。";document.getElementById("source").textContent="暂无句子";return}
+  const x=items[index];document.getElementById("meta").textContent=(index+1)+" / "+items.length+" · 历史错误 "+x.error_count+" 次 · "+(x.video_title||x.video_id);
+  document.getElementById("bar").style.width=((index+1)/items.length*100)+"%";
+  const src=document.getElementById("source");src.textContent=x.text;src.classList.toggle("hidden",!reveal);
+  document.getElementById("answer").value="";document.getElementById("feedback").textContent="";
+  if(ready)player.cueVideoById(x.video_id);
+}
+function play(){
+  if(!ready||!items.length)return;const x=items[index];clearInterval(stopTimer);player.seekTo(x.start,true);player.playVideo();
+  stopTimer=setInterval(()=>{if(player.getCurrentTime()>=(x.end||x.start+x.duration)-.04){player.pauseVideo();clearInterval(stopTimer)}},40);
+}
+function move(d){if(!items.length)return;index=Math.max(0,Math.min(items.length-1,index+d));reveal=false;render();setTimeout(play,80)}
+function check(){if(!items.length)return;const ok=equalAnswer(document.getElementById("answer").value,items[index].text);document.getElementById("feedback").innerHTML=ok?'<span class="ok">✓ 正确</span>':'<span class="bad">还有错误，再听一次。</span>'}
+document.getElementById("play").onclick=play;document.getElementById("prev").onclick=()=>move(-1);document.getElementById("next").onclick=()=>move(1);
+document.getElementById("show").onclick=()=>{reveal=!reveal;render()};document.getElementById("check").onclick=check;
+document.getElementById("answer").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();check()}});
+document.getElementById("learner").addEventListener("change",async function(){learnerId=Number(this.value);localStorage.setItem("mediaDictationLearnerId",String(learnerId));await loadItems()});
+window.onYouTubeIframeAPIReady=function(){player=new YT.Player("player",{height:"390",width:"640",videoId:"",playerVars:{playsinline:1,rel:0},events:{onReady:()=>{ready=true;if(items.length)player.cueVideoById(items[index].video_id)}}})};
+(async()=>{await loadLearners();await loadItems()})();
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body></html>
