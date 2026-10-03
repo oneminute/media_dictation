@@ -103,6 +103,35 @@ def ollama_chat(
     return content
 
 
+def unload_ollama_model(model: str, timeout: float = 5.0) -> bool:
+    if not model:
+        return False
+    payload = {
+        "model": model,
+        "keep_alive": 0,
+    }
+    req = Request(
+        f"{ollama_base_url()}/api/generate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=timeout) as response:
+            return 200 <= int(response.status) < 300
+    except Exception:
+        return False
+
+
+def unload_configured_ollama_models() -> None:
+    models = {
+        ollama_model("OLLAMA_TRANSLATION_MODEL"),
+        ollama_model("OLLAMA_WORD_MODEL"),
+    }
+    for model in models:
+        unload_ollama_model(model)
+
+
 def ollama_available(timeout: float = 1.5) -> bool:
     req = Request(f"{ollama_base_url()}/api/tags", method="GET")
     try:
