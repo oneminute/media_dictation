@@ -1303,12 +1303,54 @@ async function loadLocalMedia() {
 async function resumeFromQuery() {
   const params = new URLSearchParams(window.location.search);
   const resumeId = params.get("resume");
+  const savedMediaId = params.get("media");
+  const status = document.getElementById("status");
+
+  if (!resumeId && savedMediaId) {
+    status.textContent = "正在从媒体库读取已保存的 Whisper 转写…";
+    try {
+      const response = await fetch(
+        "/api/media/" + encodeURIComponent(savedMediaId) + "/transcript"
+      );
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "无法读取媒体转写。");
+      }
+
+      items = data.items || [];
+      if (!items.length) throw new Error("这个媒体没有可练习的转写片段。");
+      sourceType = "local";
+      mediaId = data.media_id;
+      sourceUrl = data.source_url;
+      videoId = data.video_id || data.media_id;
+      videoTitle = data.video_title || "";
+      segmentationVersion = data.segmentation_version || "";
+      index = 0;
+      reveal = false;
+
+      document.getElementById("url").value = "";
+      document.getElementById("lang").innerHTML =
+        '<span class="badge">' +
+        (data.language || "English") +
+        " · Whisper</span>";
+      status.textContent =
+        "已从媒体库载入 " + String(items.length) + " 个听写句子。";
+
+      configureSourcePlayer();
+      await startPracticeSession(sourceUrl, data);
+      resetForSentence();
+      return;
+    } catch (error) {
+      status.innerHTML =
+        '<span class="error">' + String(error.message || error) + "</span>";
+      return;
+    }
+  }
 
   if (!resumeId) {
     return;
   }
 
-  const status = document.getElementById("status");
   status.textContent = "正在恢复上次练习…";
 
   try {
