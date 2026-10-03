@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, request, send_from_directory
 from dotenv import load_dotenv
@@ -512,6 +515,108 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
     return segments
 
 
+def llm_provider() -> str:
+    provider = os.getenv("LLM_PROVIDER", "auto").strip().lower() or "auto"
+    if provider not in {"auto", "ollama", "openai"}:
+        raise RuntimeError(
+            "LLM_PROVIDER 必须是 auto、ollama 或 openai。"
+        )
+    return provider
+
+
+def ollama_base_url() -> str:
+    return (
+        os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        .strip()
+        .rstrip("/")
+    )
+
+
+def ollama_model(env_name: str) -> str:
+    default = "hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+    return os.getenv(env_name, default).strip() or default
+
+
+def ollama_timeout_seconds(
+    env_name: str,
+    default: float,
+) -> float:
+    raw = os.getenv(env_name, str(default)).strip()
+    try:
+        return max(3.0, min(float(raw), 120.0))
+    except ValueError:
+        return default
+
+
+def ollama_chat(
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    timeout: float,
+) -> str:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "think": False,
+        "keep_alive": "10m",
+        "options": {
+            "temperature": 0,
+        },
+    }
+
+    request_body = json.dumps(payload).encode("utf-8")
+    req = Request(
+        f"{ollama_base_url()}/api/chat",
+        data=request_body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urlopen(req, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Ollama 返回 HTTP {exc.code}：{detail}"
+        ) from exc
+    except URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        raise RuntimeError(
+            f"无法连接本地 Ollama（{ollama_base_url()}）：{reason}"
+        ) from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"本地 Ollama 请求超时（{timeout:g} 秒）。"
+        ) from exc
+
+    content = (
+        (data.get("message") or {}).get("content")
+        if isinstance(data, dict)
+        else None
+    )
+    content = str(content or "").strip()
+
+    if not content:
+        raise RuntimeError("Ollama 返回了空结果。")
+
+    return content
+
+
+def ollama_available(timeout: float = 1.5) -> bool:
+    req = Request(f"{ollama_base_url()}/api/tags", method="GET")
+    try:
+        with urlopen(req, timeout=timeout) as response:
+            return 200 <= int(response.status) < 300
+    except Exception:
+        return False
+
+
 def openai_timeout_seconds(
     env_name: str = "OPENAI_TRANSLATION_TIMEOUT_SECONDS",
     default: float = 15.0,
@@ -535,7 +640,7 @@ def reasoning_kwargs(model: str) -> dict:
     return {}
 
 
-def translate_to_chinese(text: str) -> tuple[str, str, str]:
+def translate_to_chinese_openai(text: str) -> tuple[str, str, str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -555,8 +660,6 @@ def translate_to_chinese(text: str) -> tuple[str, str, str]:
         45.0,
     )
 
-    # The OpenAI SDK defaults to a very long timeout and automatic retries.
-    # For an interactive dictation tool, fail fast and show a useful message.
     client = OpenAI(
         api_key=api_key,
         timeout=timeout,
@@ -613,11 +716,52 @@ def translate_to_chinese(text: str) -> tuple[str, str, str]:
     return translation, model, actual_tier
 
 
+def translate_to_chinese_ollama(text: str) -> tuple[str, str, str]:
+    model = ollama_model("OLLAMA_TRANSLATION_MODEL")
+    timeout = ollama_timeout_seconds(
+        "OLLAMA_TRANSLATION_TIMEOUT_SECONDS",
+        30.0,
+    )
+
+    translation = ollama_chat(
+        model=model,
+        system_prompt=(
+            "Translate English into natural Simplified Chinese. "
+            "Return only the Chinese translation. Do not explain, "
+            "do not add labels, and do not quote the answer."
+        ),
+        user_prompt=text,
+        timeout=timeout,
+    )
+    return translation, f"ollama:{model}", "local"
+
+
+def translate_to_chinese(text: str) -> tuple[str, str, str]:
+    provider = llm_provider()
+
+    if provider == "ollama":
+        return translate_to_chinese_ollama(text)
+
+    if provider == "openai":
+        return translate_to_chinese_openai(text)
+
+    # auto: local first, cloud fallback.
+    try:
+        return translate_to_chinese_ollama(text)
+    except Exception as local_exc:
+        try:
+            return translate_to_chinese_openai(text)
+        except Exception as cloud_exc:
+            raise RuntimeError(
+                f"本地 Ollama 失败：{local_exc}；OpenAI fallback 也失败：{cloud_exc}"
+            ) from cloud_exc
+
+
 def normalize_lookup_word(word: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", word.lower())
 
 
-def translate_word_in_context(
+def translate_word_in_context_openai(
     word: str,
     context_sentence: str,
 ) -> tuple[str, str, str]:
@@ -695,6 +839,57 @@ def translate_word_in_context(
 
     actual_tier = getattr(response, "service_tier", None) or service_tier
     return translation, model, actual_tier
+
+
+def translate_word_in_context_ollama(
+    word: str,
+    context_sentence: str,
+) -> tuple[str, str, str]:
+    model = ollama_model("OLLAMA_WORD_MODEL")
+    timeout = ollama_timeout_seconds(
+        "OLLAMA_WORD_TIMEOUT_SECONDS",
+        15.0,
+    )
+
+    translation = ollama_chat(
+        model=model,
+        system_prompt=(
+            "You explain English vocabulary to a Chinese learner. "
+            "Given one English target word and its sentence, return only the "
+            "concise Simplified Chinese meaning of that word in this exact context. "
+            "Usually use 1-8 Chinese characters or a very short phrase. "
+            "Do not explain and do not translate the whole sentence."
+        ),
+        user_prompt=(
+            f"Target word: {word}\n"
+            f"Sentence: {context_sentence}"
+        ),
+        timeout=timeout,
+    )
+    return translation, f"ollama:{model}", "local"
+
+
+def translate_word_in_context(
+    word: str,
+    context_sentence: str,
+) -> tuple[str, str, str]:
+    provider = llm_provider()
+
+    if provider == "ollama":
+        return translate_word_in_context_ollama(word, context_sentence)
+
+    if provider == "openai":
+        return translate_word_in_context_openai(word, context_sentence)
+
+    try:
+        return translate_word_in_context_ollama(word, context_sentence)
+    except Exception as local_exc:
+        try:
+            return translate_word_in_context_openai(word, context_sentence)
+        except Exception as cloud_exc:
+            raise RuntimeError(
+                f"本地 Ollama 失败：{local_exc}；OpenAI fallback 也失败：{cloud_exc}"
+            ) from cloud_exc
 
 
 def fetch_best_transcript(video_id: str):
