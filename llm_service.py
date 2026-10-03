@@ -256,6 +256,126 @@ def translate_to_chinese(
             ) from cloud_exc
 
 
+def generate_learning_summary_openai(
+    report: dict,
+) -> tuple[str, str, str]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("未配置 OPENAI_API_KEY。")
+
+    model = (
+        os.getenv(
+            "OPENAI_REPORT_MODEL",
+            os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-5.6-luna"),
+        ).strip()
+        or "gpt-5.6-luna"
+    )
+    service_tier = openai_service_tier(
+        "OPENAI_REPORT_SERVICE_TIER",
+        "flex",
+    )
+    timeout = openai_timeout_seconds(
+        "OPENAI_REPORT_TIMEOUT_SECONDS",
+        45.0,
+    )
+    client = OpenAI(api_key=api_key, timeout=timeout, max_retries=0)
+
+    instructions = (
+        "You are an English listening coach. Based only on the supplied "
+        "practice statistics, write a concise Simplified Chinese learning report. "
+        "Use four short sections: 最近表现, 做得好的地方, 需要加强, 接下来7天. "
+        "Be concrete and practical. Mention uncertainty when the sample is small. "
+        "Do not claim a CEFR level and do not invent facts not present in the data."
+    )
+
+    try:
+        response = client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=json.dumps(report, ensure_ascii=False),
+            max_output_tokens=700,
+            service_tier=service_tier,
+            **reasoning_kwargs(model),
+        )
+    except AuthenticationError as exc:
+        raise RuntimeError("OpenAI API key 无效或未被当前项目接受。") from exc
+    except PermissionDeniedError as exc:
+        raise RuntimeError(f"当前 API 项目没有权限使用模型 {model}。") from exc
+    except NotFoundError as exc:
+        raise RuntimeError(f"找不到模型 {model}，或当前 API 项目无权访问。") from exc
+    except RateLimitError as exc:
+        raise RuntimeError("OpenAI API 返回限流/额度错误。") from exc
+    except APITimeoutError as exc:
+        raise RuntimeError(f"OpenAI 学习总结超时（{timeout:g} 秒）。") from exc
+    except APIConnectionError as exc:
+        raise RuntimeError("无法连接 OpenAI API。") from exc
+    except BadRequestError as exc:
+        raise RuntimeError(f"OpenAI API 拒绝了学习总结请求：{exc}") from exc
+
+    text = (response.output_text or "").strip()
+    if not text:
+        raise RuntimeError("OpenAI 返回了空的学习总结。")
+    tier = getattr(response, "service_tier", None) or service_tier
+    return text, model, tier
+
+
+def generate_learning_summary_ollama(
+    report: dict,
+    timeout_override: float | None = None,
+) -> tuple[str, str, str]:
+    model = (
+        os.getenv(
+            "OLLAMA_REPORT_MODEL",
+            ollama_model("OLLAMA_TRANSLATION_MODEL"),
+        ).strip()
+        or ollama_model("OLLAMA_TRANSLATION_MODEL")
+    )
+    timeout = (
+        float(timeout_override)
+        if timeout_override is not None
+        else ollama_timeout_seconds("OLLAMA_REPORT_TIMEOUT_SECONDS", 60.0)
+    )
+    text = ollama_chat(
+        model=model,
+        system_prompt=(
+            "你是一名英语听力训练教练。只根据提供的学习统计生成简洁、具体的中文总结。"
+            "固定包含四个短小部分：最近表现、做得好的地方、需要加强、接下来7天。"
+            "样本不足时明确说明，不要推断CEFR等级，不要编造数据。"
+        ),
+        user_prompt=json.dumps(report, ensure_ascii=False),
+        timeout=timeout,
+    )
+    return text, f"ollama:{model}", "local"
+
+
+def generate_learning_summary(
+    report: dict,
+    provider_override: str | None = None,
+) -> tuple[str, str, str]:
+    provider = normalize_provider(provider_override)
+    if provider == "ollama":
+        return generate_learning_summary_ollama(report)
+    if provider == "openai":
+        return generate_learning_summary_openai(report)
+
+    local_budget = ollama_timeout_seconds(
+        "OLLAMA_AUTO_REPORT_TIMEOUT_SECONDS",
+        20.0,
+    )
+    try:
+        return generate_learning_summary_ollama(
+            report,
+            timeout_override=local_budget,
+        )
+    except Exception as local_exc:
+        try:
+            return generate_learning_summary_openai(report)
+        except Exception as cloud_exc:
+            raise RuntimeError(
+                f"本地总结失败：{local_exc}；OpenAI fallback 也失败：{cloud_exc}"
+            ) from cloud_exc
+
+
 def normalize_lookup_word(word: str) -> str:
     import re
     return re.sub(r"[^a-z0-9]+", "", word.lower())
