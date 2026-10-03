@@ -74,7 +74,7 @@ OLLAMA_AUTO_WORD_TIMEOUT_SECONDS=7
 Ollama does not need to be exposed to the LAN. Media Dictation calls
 `127.0.0.1:11434` on the server PC.
 
-### Optional local media + Whisper
+### Local media + background Whisper
 
 Local media is optional and does not change the normal YouTube path.
 
@@ -102,17 +102,26 @@ MEDIA_DICTATION_MEDIA_DIR=E:/AI/media-dictation-media
 MEDIA_MAX_UPLOAD_MB=1024
 ```
 
-The flow is:
+The normal local-media flow is asynchronous:
 
 ```
 local media upload
+ -> persisted transcription job
+ -> browser polls progress
  -> optional Qwen VRAM release
  -> faster-whisper
  -> word timestamps
- -> normal Media Dictation segmentation
+ -> transcript stored with the media item
+ -> start practice
  -> exact practice-item snapshot
  -> HTML5 audio/video playback
 ```
+
+The default background worker count is one, which avoids trying to run multiple
+Whisper jobs at once on an 8 GB GPU. The media library at `/library` shows
+queued/running/completed/failed jobs, progress, saved media, practice history,
+rename/retry/start/delete actions. A server restart marks an in-process job as
+interrupted so it can be retried cleanly.
 
 With `WHISPER_DEVICE=auto`, the service tries CUDA first and falls back to CPU
 int8 if CUDA initialization or transcription fails. On an 8 GB GPU,
@@ -189,13 +198,34 @@ Vocabulary entries can be rated:
 - Good
 - Easy
 
-The application schedules a future due time based on the rating. This is a
-lightweight spaced-review system; it is not yet a full FSRS implementation.
+The review scheduler uses **FSRS-6** through `py-fsrs`. Each vocabulary entry
+stores its serialized FSRS card state and review log. The desired retention is
+configurable with:
+
+```env
+FSRS_DESIRED_RETENTION=0.90
+```
+
+Legacy vocabulary automatically begins FSRS scheduling on its next review.
+
+### CEFR-aligned listening screening
+
+`/assessment` provides a separate 12-item fixed-material listening/dictation
+screen across A2, B1, B2, and C1 difficulty bands.
+
+It records transcription accuracy and replay count and stores assessment
+history separately from ordinary YouTube/media practice. The result is labelled
+a **CEFR-aligned screening estimate**. It is not an official CEFR examination or
+certification.
+
+The current version uses the browser's local American-English speech synthesis.
+That keeps the assessment local, but voice quality may differ between PCs.
+Human-recorded/versioned audio is a future calibration improvement.
 
 ### Data export and backup
 
-The Learning Center has **导出数据**. It downloads a portable JSON export for
-the selected learner containing:
+The Learning Center has **导出数据** and **导入数据**. Export downloads a
+portable JSON package for the selected learner containing:
 
 - learner metadata;
 - reports;
@@ -205,6 +235,11 @@ the selected learner containing:
 - interaction telemetry;
 - sentence reviews;
 - vocabulary and contexts.
+
+Import validates `export_version=1` and restores the package into a **new
+learner profile**, preserving the original learner rather than overwriting it.
+JSON restore does not contain local media binaries; use the full backup for
+those files.
 
 A fast database-only backup script is provided:
 
@@ -279,6 +314,23 @@ media. Leave it blank to keep the previous no-login behavior. You may also set
 `MEDIA_DICTATION_SECRET_KEY` if you want login sessions to survive server
 restarts.
 
+Optional LAN hardening is available without adding Redis or another service:
+
+```env
+MEDIA_RATE_LIMIT_ENABLED=false
+MEDIA_LOGIN_RATE_LIMIT_PER_MINUTE=10
+MEDIA_EXPENSIVE_RATE_LIMIT_PER_MINUTE=30
+MEDIA_AUDIT_ENABLED=true
+```
+
+Rate limiting is disabled by default for a trusted household LAN. When enabled,
+it limits login attempts and expensive endpoints such as transcription,
+translation, import, and AI summaries. Audit logging is enabled by default and
+stores only action/IP/result/non-sensitive summaries; it never records PINs,
+API keys, or complete dictation answers. Recent entries are available through
+`/api/audit` to an authenticated household browser when PIN protection is
+enabled.
+
 ## Configuration
 
 Copy:
@@ -313,6 +365,14 @@ OPENAI_TRANSLATION_TIMEOUT_SECONDS=45
 OPENAI_WORD_MODEL=gpt-5.6-luna
 OPENAI_WORD_SERVICE_TIER=default
 OPENAI_WORD_TIMEOUT_SECONDS=15
+
+FSRS_DESIRED_RETENTION=0.90
+MEDIA_TRANSCRIPTION_WORKERS=1
+
+MEDIA_RATE_LIMIT_ENABLED=false
+MEDIA_LOGIN_RATE_LIMIT_PER_MINUTE=10
+MEDIA_EXPENSIVE_RATE_LIMIT_PER_MINUTE=30
+MEDIA_AUDIT_ENABLED=true
 ```
 
 For completely local operation:
@@ -343,7 +403,8 @@ It reports, without exposing secrets:
 - OpenAI model and service-tier settings;
 - whether faster-whisper is installed;
 - Whisper model/device configuration;
-- media upload limit.
+- media upload limit;
+- rate-limit/audit settings.
 
 ## Testing
 
@@ -359,7 +420,8 @@ or:
 python -m unittest discover -s tests -v
 ```
 
-GitHub Actions runs the same unit-test suite on every push and pull request.
+GitHub Actions runs the Python/unit/API suite, inline JavaScript syntax checks,
+and a Playwright Chromium E2E suite on every push and pull request.
 
 Coverage currently includes:
 
@@ -372,16 +434,24 @@ Coverage currently includes:
 - provider/model-scoped caching;
 - local-first LLM routing;
 - multi-meaning vocabulary;
-- spaced-review updates;
+- FSRS-6 vocabulary scheduling and review state;
 - targeted sentence review;
 - learner export API;
 - local-media ingestion metadata and Whisper timestamp conversion;
 - optional household PIN protection;
 - per-request LLM provider override;
-- AI learning summary endpoint.
+- AI learning summary endpoint;
+- persisted media transcription jobs and transcript metadata;
+- learner export/import round trips;
+- CEFR-aligned assessment scoring/history.
 
-CI also runs Node syntax checks against the inline JavaScript in all three
-browser pages.
+Playwright additionally checks the real browser flow with mocked external
+YouTube dependencies: learner creation, transcript loading, punctuation-
+insensitive checking, session/history rendering, export/import, and the
+library/assessment/review pages.
+
+CI also runs Node syntax checks against the inline JavaScript in all browser
+pages.
 
 ## Project structure
 
@@ -390,18 +460,24 @@ app.py                  Flask routes
 transcript_service.py   YouTube + caption cleanup + segmentation
 llm_service.py          Ollama/OpenAI providers, routing, AI summaries
 media_service.py        local media persistence + optional faster-whisper
+job_service.py          persisted background Whisper worker
+assessment_service.py   fixed-material CEFR-aligned screening logic
 storage.py              SQLite schema, migrations, repositories, analytics
 
 static/
   index.html             main dictation UI
   learning.html          reports, history, vocabulary, SRS
   review.html            targeted weak-sentence review
+  library.html           local media library and job progress
+  assessment.html        fixed-material listening screening
 
 tests/
   test_segmentation.py
   test_storage_v2.py
   test_api_v2.py
   test_media_service.py
+  test_remaining_features.py
+  e2e/core.spec.js
 ```
 
 See `ARCHITECTURE.md` for design details and `ROADMAP.md` for remaining work.
