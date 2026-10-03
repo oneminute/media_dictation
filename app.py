@@ -3,6 +3,9 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
+import time
+from collections import defaultdict, deque
+from threading import Lock
 
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
 from dotenv import load_dotenv
@@ -76,9 +79,11 @@ from storage import (
     init_db,
     latest_transcription_job,
     list_assessment_runs,
+    list_audit_events,
     list_learners,
     list_media_sources,
     record_assessment_response,
+    record_audit_event,
     record_attempt,
     record_practice_event,
     record_sentence_review,
@@ -120,6 +125,128 @@ def configured_pin() -> str:
     return os.getenv("MEDIA_DICTATION_PIN", "").strip()
 
 
+_rate_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+_rate_lock = Lock()
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "true" if default else "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default)).strip()))
+    except ValueError:
+        return default
+
+
+def client_ip() -> str:
+    # Waitress is directly exposed on the trusted LAN; do not trust forwarded
+    # headers unless a reverse proxy is deliberately added later.
+    return str(request.remote_addr or "")
+
+
+def _rate_bucket() -> tuple[str, int] | None:
+    if not _env_bool("MEDIA_RATE_LIMIT_ENABLED", False):
+        return None
+
+    if request.endpoint == "login" and request.method == "POST":
+        return (
+            "login",
+            _env_int("MEDIA_LOGIN_RATE_LIMIT_PER_MINUTE", 10),
+        )
+
+    expensive = {
+        "create_media_job",
+        "retry_media_transcription",
+        "narrative_report",
+        "translate",
+        "word_lookup",
+        "import_data",
+        "assessment_start",
+    }
+    if request.endpoint in expensive:
+        return (
+            "expensive",
+            _env_int("MEDIA_EXPENSIVE_RATE_LIMIT_PER_MINUTE", 30),
+        )
+    return None
+
+
+@app.before_request
+def household_rate_limit():
+    config = _rate_bucket()
+    if config is None:
+        return None
+
+    bucket, limit = config
+    now = time.monotonic()
+    key = (client_ip(), bucket)
+
+    with _rate_lock:
+        window = _rate_windows[key]
+        cutoff = now - 60.0
+        while window and window[0] < cutoff:
+            window.popleft()
+
+        if len(window) >= limit:
+            if request.path.startswith("/api/"):
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "请求过于频繁，请稍后再试。",
+                    }
+                ), 429
+            return "Too many requests. Please try again later.", 429
+
+        window.append(now)
+
+    return None
+
+
+@app.after_request
+def audit_sensitive_actions(response):
+    if not _env_bool("MEDIA_AUDIT_ENABLED", True):
+        return response
+
+    audited_endpoints = {
+        "learner_create",
+        "create_media_job",
+        "retry_media_transcription",
+        "media_rename",
+        "media_delete",
+        "import_data",
+        "assessment_start",
+    }
+    if request.endpoint not in audited_endpoints:
+        return response
+
+    learner_id = None
+    try:
+        raw = request.args.get("learner_id")
+        if raw is None and request.is_json:
+            raw = (request.get_json(silent=True) or {}).get("learner_id")
+        if raw is None and request.form:
+            raw = request.form.get("learner_id")
+        learner_id = int(raw) if raw not in {None, ""} else None
+    except (TypeError, ValueError):
+        learner_id = None
+
+    try:
+        record_audit_event(
+            request.endpoint or request.path,
+            status="ok" if response.status_code < 400 else f"http_{response.status_code}",
+            client_ip=client_ip(),
+            detail=f"{request.method} {request.path}",
+            learner_id=learner_id,
+        )
+    except Exception:
+        pass
+
+    return response
+
+
 @app.before_request
 def require_household_pin():
     pin = configured_pin()
@@ -154,7 +281,25 @@ def login():
         supplied = str(request.form.get("pin", ""))
         if hmac.compare_digest(supplied, pin):
             session["media_dictation_authenticated"] = True
+            try:
+                record_audit_event(
+                    "login",
+                    status="success",
+                    client_ip=client_ip(),
+                    detail="Household PIN login",
+                )
+            except Exception:
+                pass
             return redirect("/")
+        try:
+            record_audit_event(
+                "login",
+                status="failure",
+                client_ip=client_ip(),
+                detail="Incorrect household PIN",
+            )
+        except Exception:
+            pass
         error = "PIN 不正确。"
 
     error_html = (
@@ -474,6 +619,8 @@ def health():
             "proxy_mode": proxy_mode,
             "sqlite_enabled": True,
             "pin_enabled": bool(configured_pin()),
+            "rate_limit_enabled": _env_bool("MEDIA_RATE_LIMIT_ENABLED", False),
+            "audit_enabled": _env_bool("MEDIA_AUDIT_ENABLED", True),
             "schema_version": get_schema_version(),
             "segmentation_version": SEGMENTATION_VERSION,
             "whisper_available": whisper_available(),
@@ -653,6 +800,15 @@ def save_practice_event():
 @app.get("/api/stats")
 def stats():
     return jsonify({"ok": True, **get_stats()})
+
+
+@app.get("/api/audit")
+def audit_log():
+    try:
+        limit = int(request.args.get("limit", "100"))
+    except ValueError:
+        limit = 100
+    return jsonify({"ok": True, "items": list_audit_events(limit=limit)})
 
 
 @app.get("/api/export")
