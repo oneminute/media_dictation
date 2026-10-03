@@ -75,13 +75,18 @@ button.warn{background:#fef3c7;color:#92400e}
   .grid{grid-template-columns:1fr}
   .url-row{flex-direction:column}
 }
-#player{
+#player,#mediaPlayer{
   width:100%;
   aspect-ratio:16/9;
   background:#111;
   border-radius:12px;
   overflow:hidden;
 }
+#mediaPlayer{display:none}
+.source-divider{margin:12px 0;text-align:center;color:var(--muted);font-size:13px}
+.file-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.file-row input[type=file]{flex:1;min-width:260px;padding:9px;background:#fff}
+.source-note{font-size:12px;color:var(--muted);margin-top:7px}
 .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
 .meta{font-size:14px;color:var(--muted)}
 .progress{
@@ -198,7 +203,7 @@ button.warn{background:#fef3c7;color:#92400e}
   <div class="topbar">
     <div>
       <h1>Media Dictation</h1>
-      <div class="sub">粘贴 YouTube 或 YouTube Music Podcast 链接，逐句听写。原文默认隐藏。</div>
+      <div class="sub">YouTube 字幕或本地音视频都可以转成逐句听写。原文默认隐藏。</div>
     </div>
     <div class="top-actions">
       <select id="learnerSelect" class="learner-select" title="当前学习者"></select>
@@ -218,12 +223,19 @@ button.warn{background:#fef3c7;color:#92400e}
       <input id="url" type="text" placeholder="YouTube / YouTube Music Podcast 链接" autocomplete="off">
       <button id="load" class="primary">获取字幕并开始</button>
     </div>
-    <div id="status" class="status">输入链接后开始。字幕载入后，单按 Ctrl 重播当前句。</div>
+    <div class="source-divider">或者使用本地媒体</div>
+    <div class="file-row">
+      <input id="mediaFile" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.mp4,.webm,.mov,.mkv,audio/*,video/*">
+      <button id="loadMedia">Whisper 转写并开始</button>
+    </div>
+    <div class="source-note">本地媒体会上传到这台 Media Dictation 服务器并由本机 Whisper 转写；需要先运行 setup_whisper_windows.bat。</div>
+    <div id="status" class="status">选择 YouTube 链接或本地媒体开始。载入后单按 Ctrl 重播当前句。</div>
   </div>
 
   <div class="grid">
     <div class="card">
       <div id="player"></div>
+      <video id="mediaPlayer" controls preload="metadata"></video>
     </div>
 
     <div class="card">
@@ -302,6 +314,10 @@ let reveal = false;
 let videoId = "";
 let videoTitle = "";
 let segmentationVersion = "";
+let sourceType = "youtube";
+let mediaId = null;
+let sourceUrl = "";
+let mediaPlayer = null;
 let sessionId = null;
 let activeLearnerId = null;
 let activeLlmProvider = localStorage.getItem("mediaDictationLlmProvider") || "auto";
@@ -573,7 +589,7 @@ async function addActiveWordToVocabulary() {
         translation: activeWordLookup.translation,
         context: activeWordLookup.context,
         video_id: videoId,
-        source_url: document.getElementById("url").value.trim(),
+        source_url: sourceUrl || document.getElementById("url").value.trim(),
         learner_id: activeLearnerId,
         session_id: sessionId,
         sentence_index: index
@@ -614,10 +630,33 @@ function resetForSentence() {
   focusAnswer();
 }
 
-function playCurrent() {
-  if (!playerReady || !items.length) {
-    return;
+function configureSourcePlayer() {
+  const youtubeHost = document.getElementById("player");
+  const localMedia = document.getElementById("mediaPlayer");
+
+  if (sourceType === "local") {
+    youtubeHost.style.display = "none";
+    localMedia.style.display = "block";
+    if (sourceUrl && localMedia.getAttribute("src") !== sourceUrl) {
+      localMedia.src = sourceUrl;
+      localMedia.load();
+    }
+    if (playerReady && player) {
+      try { player.pauseVideo(); } catch (error) {}
+    }
+  } else {
+    youtubeHost.style.display = "block";
+    localMedia.style.display = "none";
+    try { localMedia.pause(); } catch (error) {}
+    if (playerReady && videoId) {
+      player.cueVideoById(videoId);
+    }
   }
+}
+
+function playCurrent() {
+  if (!items.length) return;
+  if (sourceType === "youtube" && !playerReady) return;
 
   void logPracticeEvent("play", 0, "");
   clearInterval(stopTimer);
@@ -625,9 +664,22 @@ function playCurrent() {
   const item = items[index];
   const end = item.end || (item.start + Math.max(item.duration || 0, 0.25));
 
+  if (sourceType === "local") {
+    const localMedia = document.getElementById("mediaPlayer");
+    localMedia.currentTime = Number(item.start || 0);
+    const promise = localMedia.play();
+    if (promise && promise.catch) promise.catch(function () {});
+    stopTimer = setInterval(function () {
+      if (localMedia.currentTime >= end - 0.04 || localMedia.ended) {
+        localMedia.pause();
+        clearInterval(stopTimer);
+      }
+    }, 40);
+    return;
+  }
+
   player.seekTo(item.start, true);
   player.playVideo();
-
   stopTimer = setInterval(function () {
     const current = player.getCurrentTime();
     if (current >= end - 0.04) {
@@ -1044,6 +1096,8 @@ async function startPracticeSession(sourceUrl, transcriptData) {
         learner_id: activeLearnerId,
         video_title: transcriptData.video_title || "",
         segmentation_version: transcriptData.segmentation_version || "",
+        source_type: transcriptData.source_type || sourceType || "youtube",
+        media_id: transcriptData.media_id || mediaId,
         items: transcriptData.items || []
       })
     });
@@ -1082,6 +1136,9 @@ async function loadVideo(options) {
     }
 
     items = data.items || [];
+    sourceType = "youtube";
+    mediaId = null;
+    sourceUrl = url;
     videoId = data.video_id;
     videoTitle = data.video_title || "";
     segmentationVersion = data.segmentation_version || "";
@@ -1119,12 +1176,78 @@ async function loadVideo(options) {
     }
     resetForSentence();
 
-    if (playerReady) {
-      player.cueVideoById(videoId);
-    }
+    configureSourcePlayer();
   } catch (error) {
     status.innerHTML =
       '<span class="error">' + String(error.message || error) + "</span>";
+  }
+}
+
+async function loadLocalMedia() {
+  const fileInput = document.getElementById("mediaFile");
+  const button = document.getElementById("loadMedia");
+  const status = document.getElementById("status");
+  const file = fileInput.files && fileInput.files[0];
+
+  if (!file) {
+    status.innerHTML = '<span class="error">请先选择一个本地音频或视频文件。</span>';
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "正在转写…";
+  status.textContent =
+    "正在上传并用 Whisper 转写。第一次会下载 Whisper 模型，较长媒体可能需要几分钟…";
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("learner_id", String(activeLearnerId || ""));
+
+  try {
+    const response = await fetch("/api/media/transcribe", {
+      method: "POST",
+      body: form
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "本地媒体转写失败。");
+    }
+
+    items = data.items || [];
+    if (!items.length) throw new Error("Whisper 没有生成可用于听写的句子。");
+
+    sourceType = "local";
+    mediaId = data.media_id;
+    sourceUrl = data.source_url;
+    videoId = data.video_id || data.media_id;
+    videoTitle = data.video_title || file.name;
+    segmentationVersion = data.segmentation_version || "";
+    index = 0;
+    reveal = false;
+
+    document.getElementById("url").value = "";
+    document.getElementById("lang").innerHTML =
+      '<span class="badge">' +
+      (data.language || "English") +
+      " · Whisper · " +
+      (data.whisper_device || "") +
+      "</span>";
+
+    status.textContent =
+      "Whisper 已生成 " + String(items.length) +
+      " 个听写句子 · " +
+      String(data.whisper_model || "") +
+      " · " + String(data.whisper_compute_type || "");
+
+    configureSourcePlayer();
+    await startPracticeSession(sourceUrl, data);
+    resetForSentence();
+  } catch (error) {
+    status.innerHTML =
+      '<span class="error">' + String(error.message || error) + "</span>";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Whisper 转写并开始";
   }
 }
 
@@ -1148,7 +1271,10 @@ async function resumeFromQuery() {
     }
 
     const session = data.session;
-    document.getElementById("url").value = session.source_url;
+    document.getElementById("url").value =
+      (session.source_type || "youtube") === "youtube"
+        ? session.source_url
+        : "";
 
     if (session.learner_id) {
       await loadLearners(session.learner_id);
@@ -1156,6 +1282,9 @@ async function resumeFromQuery() {
 
     if (session.items && session.items.length) {
       items = session.items;
+      sourceType = session.source_type || "youtube";
+      mediaId = session.media_id || null;
+      sourceUrl = session.source_url || "";
       videoId = session.video_id;
       videoTitle = session.video_title || "";
       segmentationVersion = session.segmentation_version || "";
@@ -1172,7 +1301,7 @@ async function resumeFromQuery() {
         String(index + 1) + " / " + String(items.length) + " 句。";
       resetForSentence();
       void logPracticeEvent("session_open", 0, "resume_snapshot");
-      if (playerReady) player.cueVideoById(videoId);
+      configureSourcePlayer();
     } else {
       await loadVideo({
         reuseSessionId: session.id,
@@ -1199,6 +1328,7 @@ document.getElementById("addLearner").addEventListener("click", addLearner);
 document.getElementById("load").addEventListener("click", function () {
   loadVideo();
 });
+document.getElementById("loadMedia").addEventListener("click", loadLocalMedia);
 document.getElementById("play").addEventListener("click", playCurrent);
 document.getElementById("prev").addEventListener("click", function () {
   moveSentence(-1, true);
@@ -1275,6 +1405,7 @@ window.addEventListener(
 
 async function bootstrap() {
   try {
+    mediaPlayer = document.getElementById("mediaPlayer");
     const providerSelect = document.getElementById("llmProviderSelect");
     if (["auto","ollama","openai"].includes(activeLlmProvider)) {
       providerSelect.value = activeLlmProvider;
@@ -1308,7 +1439,7 @@ window.onYouTubeIframeAPIReady = function () {
     events: {
       onReady: function () {
         playerReady = true;
-        if (videoId) {
+        if (videoId && sourceType === "youtube") {
           player.cueVideoById(videoId);
         }
       }
