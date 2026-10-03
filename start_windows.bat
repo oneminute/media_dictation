@@ -9,11 +9,10 @@ if %errorlevel%==0 (
   set "PY=python"
 )
 
-echo Installing/checking required packages...
-%PY% -m pip install -U -r requirements.txt
+echo Checking dependencies...
+%PY% -c "import flask, openai, dotenv, youtube_transcript_api" >nul 2>nul
 if errorlevel 1 (
-  echo.
-  echo Failed to install Python dependencies.
+  echo Dependencies are missing. Run setup_windows.bat first.
   pause
   exit /b 1
 )
