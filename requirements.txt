@@ -3,3 +3,4 @@ youtube-transcript-api>=1.2,<2
 openai>=1.66
 python-dotenv>=1.0
 waitress>=3.0,<4
+fsrs>=6.3,<7
