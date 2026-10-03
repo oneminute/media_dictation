@@ -93,6 +93,7 @@ from storage import (
     save_translation,
     save_word_translation,
     start_assessment_run,
+    update_media_transcription,
 )
 
 load_dotenv()
@@ -575,6 +576,11 @@ def transcribe_local_media():
             size_bytes=saved["size_bytes"],
             title=saved["title"],
             learner_id=request.form.get("learner_id"),
+        )
+        update_media_transcription(
+            source["id"],
+            status="ready",
+            transcript=result,
         )
 
         return jsonify(
