@@ -21,6 +21,11 @@
 - [x] Stable production launcher
 - [x] Automated unit tests and GitHub Actions CI
 - [x] Transcript and LLM service extraction
+- [x] Per-browser Auto / Local Qwen / OpenAI selector
+- [x] On-demand AI 30-day learning summary
+- [x] Optional household PIN protection
+- [x] Full SQLite + local media backup
+- [x] Inline browser JavaScript CI syntax checks
 
 ## Next high-value work
 
@@ -51,8 +56,9 @@ implementation once enough review-history data exists.
 
 ### LAN access hardening
 
-Optional simple PIN/session authentication for household use, without turning
-the project into a cloud account system.
+- [x] optional simple PIN/session authentication for household use
+- [ ] optional rate limiting / audit log if the LAN deployment grows beyond a
+  trusted household
 
 ### Browser E2E tests
 
