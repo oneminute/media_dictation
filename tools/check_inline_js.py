@@ -11,6 +11,8 @@ FILES = [
     Path("static/index.html"),
     Path("static/learning.html"),
     Path("static/review.html"),
+    Path("static/library.html"),
+    Path("static/assessment.html"),
 ]
 
 
