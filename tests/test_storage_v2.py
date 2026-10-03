@@ -28,6 +28,37 @@ class StorageV2Tests(unittest.TestCase):
         self.assertTrue(learners)
         self.assertTrue(any(item["is_default"] for item in learners))
 
+    def test_local_media_session_metadata(self):
+        learner = storage.create_learner("Local Media")
+        source = storage.save_media_source(
+            media_id="media123",
+            original_name="lesson.mp3",
+            stored_filename="media123.mp3",
+            mime_type="audio/mpeg",
+            size_bytes=1234,
+            title="Lesson",
+            learner_id=learner["id"],
+        )
+        self.assertEqual(source["title"], "Lesson")
+
+        session_id = storage.create_session(
+            video_id="media123",
+            source_url="/media/media123",
+            language="en",
+            is_generated=True,
+            total_items=1,
+            learner_id=learner["id"],
+            video_title="Lesson",
+            items=[{"text": "hello", "start": 0, "end": 1, "duration": 1}],
+            segmentation_version="whisper-test",
+            source_type="local",
+            media_id="media123",
+        )
+        detail = storage.get_session_detail(session_id)
+        self.assertEqual(detail["source_type"], "local")
+        self.assertEqual(detail["media_id"], "media123")
+        self.assertEqual(detail["source_url"], "/media/media123")
+
     def test_snapshot_resume_survives_segmentation_changes(self):
         learner = storage.create_learner("Student")
         items = [
