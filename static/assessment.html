@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>听力水平评估 · Media Dictation</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5e7eb;--primary:#2563eb;--ok:#15803d;--warn:#b45309}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:22px}.header{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:18px}.toolbar{display:flex;gap:8px;flex-wrap:wrap}
+h1{margin:0;font-size:28px}.sub,.small{color:var(--muted);line-height:1.55}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px rgba(0,0,0,.04)}
+select,button,a.button,textarea{font:inherit;border:1px solid #cbd5e1;border-radius:10px}select,button,a.button{padding:9px 12px;background:#fff;color:var(--text);text-decoration:none;cursor:pointer}button.primary,a.primary{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:700}
+textarea{width:100%;min-height:120px;padding:14px;font-size:18px;margin-top:12px;resize:vertical}.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.progress{height:9px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:14px 0}.bar{height:100%;background:var(--primary)}.metric{font-size:42px;font-weight:800}.level{font-size:30px;font-weight:800;color:var(--primary)}.hidden{display:none}.history{padding:10px 0;border-top:1px solid var(--line)}.history:first-child{border-top:0}.warn{color:var(--warn)}.ok{color:var(--ok)}kbd{background:#eef2f7;border:1px solid #d0d5dd;border-radius:5px;padding:2px 6px}
+@media(max-width:650px){.header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1>听力水平评估</h1>
+      <div class="sub">固定 A2 / B1 / B2 / C1 材料的 CEFR-aligned screening。</div>
+    </div>
+    <div class="toolbar">
+      <select id="learnerSelect"></select>
+      <a class="button" href="/library">媒体库</a>
+      <a class="button" href="/learning">学习中心</a>
+      <a class="button primary" href="/">返回听写</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>说明</strong>
+    <div class="small" style="margin-top:6px">
+      这是固定材料的家庭筛查，不是官方 CEFR 考试或证书。音频由浏览器本地的
+      American English TTS 合成，因此不同电脑的声音可能略有不同。测试过程中不显示原文；
+      标点和大小写不计入听写准确率，重复播放会轻微降低筛查分数。
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label>声音 <select id="voiceSelect"></select></label>
+      <button id="start" class="primary">开始 12 题评估</button>
+    </div>
+  </div>
+
+  <div id="testCard" class="card hidden">
+    <div class="row" style="justify-content:space-between">
+      <strong id="position">1 / 12</strong>
+      <span id="band" class="small">A2</span>
+    </div>
+    <div class="progress"><div id="bar" class="bar"></div></div>
+    <div class="row">
+      <button id="play" class="primary">▶ 播放</button>
+      <button id="replay">↻ 重播</button>
+      <span class="small">本题重播：<span id="replayCount">0</span></span>
+    </div>
+    <textarea id="answer" placeholder="输入你听到的英文…" spellcheck="false" autocapitalize="off"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="submit" class="primary">提交并进入下一题</button>
+      <span id="status" class="small"></span>
+    </div>
+  </div>
+
+  <div id="resultCard" class="card hidden">
+    <div class="small">CEFR-aligned screening estimate</div>
+    <div id="resultLevel" class="level">–</div>
+    <div><span id="resultScore" class="metric">–</span> / 100</div>
+    <div id="resultConfidence" class="small"></div>
+    <div id="levelStats" style="margin-top:14px;line-height:1.8"></div>
+    <div id="resultNote" class="small" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:14px"><button id="restart">重新评估</button></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">历史评估</h2>
+    <div id="history" class="small">正在读取…</div>
+  </div>
+</div>
+
+<script>
+let activeLearnerId=Number(localStorage.getItem("mediaDictationLearnerId")||0);
+let runId=null,items=[],pos=0,replays=0,hasPlayed=false;
+let voices=[];
+
+async function loadLearners(){
+  const r=await fetch("/api/learners"),d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||"无法读取学习者");
+  const s=document.getElementById("learnerSelect");s.textContent="";
+  (d.learners||[]).forEach(x=>{const o=document.createElement("option");o.value=x.id;o.textContent=x.name;s.appendChild(o)});
+  if(!activeLearnerId)activeLearnerId=Number(d.default_learner_id||0);
+  s.value=String(activeLearnerId);
+}
+function loadVoices(){
+  voices=speechSynthesis.getVoices().filter(v=>/^en[-_]/i.test(v.lang));
+  const us=voices.filter(v=>/^en[-_]US/i.test(v.lang));
+  if(us.length)voices=us.concat(voices.filter(v=>!us.includes(v)));
+  const s=document.getElementById("voiceSelect");s.textContent="";
+  voices.forEach((v,i)=>{const o=document.createElement("option");o.value=i;o.textContent=v.name+" · "+v.lang;s.appendChild(o)});
+  if(!voices.length){const o=document.createElement("option");o.textContent="系统默认英文声音";s.appendChild(o)}
+}
+function current(){return items[pos]}
+function renderItem(){
+  const x=current();if(!x)return;
+  document.getElementById("position").textContent=(pos+1)+" / "+items.length;
+  document.getElementById("band").textContent=x.level+" 难度";
+  document.getElementById("bar").style.width=((pos/items.length)*100)+"%";
+  document.getElementById("answer").value="";
+  document.getElementById("status").textContent="";
+  replays=0;hasPlayed=false;document.getElementById("replayCount").textContent="0";
+  document.getElementById("answer").focus();
+}
+function speak(isReplay){
+  const x=current();if(!x)return;
+  if(isReplay&&hasPlayed){replays+=1;document.getElementById("replayCount").textContent=String(replays)}
+  hasPlayed=true;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(x.tts_text);
+  u.lang="en-US";u.rate=Number(x.rate||1);u.pitch=1;
+  const i=Number(document.getElementById("voiceSelect").value||0);
+  if(voices[i])u.voice=voices[i];
+  speechSynthesis.speak(u);
+}
+async function start(){
+  const r=await fetch("/api/assessment/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({learner_id:activeLearnerId})});
+  const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"无法开始评估");
+  runId=d.run_id;items=d.items||[];pos=0;
+  document.getElementById("resultCard").classList.add("hidden");
+  document.getElementById("testCard").classList.remove("hidden");
+  renderItem();speak(false);
+}
+async function submit(){
+  const answer=document.getElementById("answer").value.trim();
+  if(!answer){document.getElementById("status").textContent="请先输入你听到的内容。";return}
+  const x=current();
+  const r=await fetch("/api/assessment/"+encodeURIComponent(runId)+"/answer",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({item_id:x.id,answer,replays})
+  });
+  const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"保存失败");
+  pos+=1;
+  if(pos>=items.length){await finish();return}
+  renderItem();speak(false);
+}
+async function finish(){
+  speechSynthesis.cancel();
+  const r=await fetch("/api/assessment/"+encodeURIComponent(runId)+"/finish",{method:"POST"});
+  const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"评估完成失败");
+  const x=d.result||{};
+  document.getElementById("testCard").classList.add("hidden");
+  document.getElementById("resultCard").classList.remove("hidden");
+  document.getElementById("resultLevel").textContent=x.estimated_level||"–";
+  document.getElementById("resultScore").textContent=Number(x.score||0).toFixed(1);
+  document.getElementById("resultConfidence").textContent="Confidence: "+String(x.confidence||"");
+  document.getElementById("resultNote").textContent=x.note||"";
+  const stats=document.getElementById("levelStats");stats.textContent="";
+  Object.entries(x.level_stats||{}).forEach(([level,v])=>{
+    const div=document.createElement("div");
+    div.textContent=level+"："+(v.average_accuracy==null?"–":Number(v.average_accuracy).toFixed(1)+"%")+" · "+(v.passed?"通过筛查阈值":"未通过筛查阈值");
+    stats.appendChild(div);
+  });
+  await loadHistory();
+}
+async function loadHistory(){
+  const r=await fetch("/api/assessment/history?learner_id="+encodeURIComponent(activeLearnerId));
+  const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"历史评估读取失败");
+  const host=document.getElementById("history");host.textContent="";
+  if(!d.items||!d.items.length){host.textContent="还没有完成的评估。";return}
+  d.items.forEach(x=>{
+    const div=document.createElement("div");div.className="history";
+    div.textContent=(x.completed_at||"")+" · "+(x.estimated_level||"–")+" · "+Number(x.score||0).toFixed(1)+"/100 · confidence "+(x.confidence||"");
+    host.appendChild(div);
+  });
+}
+document.getElementById("start").onclick=()=>start().catch(e=>alert(String(e.message||e)));
+document.getElementById("play").onclick=()=>speak(false);
+document.getElementById("replay").onclick=()=>speak(true);
+document.getElementById("submit").onclick=()=>submit().catch(e=>alert(String(e.message||e)));
+document.getElementById("restart").onclick=()=>start().catch(e=>alert(String(e.message||e)));
+document.getElementById("learnerSelect").onchange=async function(){activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));await loadHistory()};
+window.speechSynthesis.onvoiceschanged=loadVoices;
+(async function(){try{loadVoices();await loadLearners();await loadHistory()}catch(e){alert(String(e.message||e))}})();
+</script>
+</body>
+</html>
