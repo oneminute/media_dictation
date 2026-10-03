@@ -41,6 +41,7 @@ from storage import (
     list_learners,
     record_attempt,
     record_practice_event,
+    record_sentence_review,
     review_vocabulary,
     save_translation,
     save_word_translation,
@@ -1255,6 +1256,23 @@ def report():
             **get_learning_report(learner_id=request_learner_id()),
         }
     )
+
+
+@app.post("/api/review-sentences/attempt")
+def review_sentence_attempt():
+    payload = request.get_json(silent=True) or {}
+    try:
+        record_sentence_review(
+            learner_id=payload.get("learner_id"),
+            original_session_id=int(payload.get("session_id")),
+            sentence_index=int(payload.get("sentence_index", 0)),
+            sentence_text=str(payload.get("sentence_text", "")).strip(),
+            answer_before=str(payload.get("answer_before", "")),
+            is_correct=bool(payload.get("is_correct", False)),
+        )
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"保存错句复习记录失败：{exc}"}), 400
 
 
 @app.get("/api/review-sentences")
