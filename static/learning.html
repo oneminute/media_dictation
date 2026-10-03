@@ -26,7 +26,7 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
 @media(max-width:650px){.assessment{grid-template-columns:1fr}}
 .chips{display:flex;flex-wrap:wrap;gap:8px}.chip{padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:13px}
 .session{display:grid;grid-template-columns:128px 1fr auto;gap:14px;align-items:center;padding:14px 0;border-top:1px solid var(--line)}.session:first-child{border-top:0}
-.thumb{width:128px;aspect-ratio:16/9;border-radius:9px;object-fit:cover;background:#111}.title{font-weight:750}.progress{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin:8px 0}.bar{height:100%;background:var(--primary)}
+.thumb{width:128px;aspect-ratio:16/9;border-radius:9px;object-fit:cover;background:#111}.local-thumb{width:128px;aspect-ratio:16/9;border-radius:9px;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;letter-spacing:.08em}.title{font-weight:750}.progress{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin:8px 0}.bar{height:100%;background:var(--primary)}
 .status-ok{color:var(--ok);font-weight:700}.status-open{color:var(--warn);font-weight:700}
 .vocab{padding:14px 0;border-top:1px solid var(--line)}.vocab:first-child{border-top:0}.word{font-size:20px;font-weight:780}.meaning{font-size:17px;color:#1749b3}.context{margin-top:6px;color:#475467;line-height:1.55}.review-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.review-actions button{padding:7px 9px;font-size:12px}
 .empty{text-align:center;padding:22px;color:var(--muted)}.report{line-height:1.75}.error{color:#b42318}
@@ -227,14 +227,19 @@ function renderSessions(items){
   if(!items||!items.length){host.innerHTML='<div class="empty">还没有练习记录。</div>';return}
   items.forEach(x=>{
     const row=document.createElement("div");row.className="session";
-    const img=document.createElement("img");img.className="thumb";img.loading="lazy";img.src="https://img.youtube.com/vi/"+encodeURIComponent(x.video_id)+"/mqdefault.jpg";
+    let thumb;
+    if((x.source_type||"youtube")==="local"){
+      thumb=document.createElement("div");thumb.className="local-thumb";thumb.textContent="LOCAL MEDIA";
+    }else{
+      thumb=document.createElement("img");thumb.className="thumb";thumb.loading="lazy";thumb.src="https://img.youtube.com/vi/"+encodeURIComponent(x.video_id)+"/mqdefault.jpg";
+    }
     const info=document.createElement("div");const title=document.createElement("div");title.className="title";title.textContent=x.video_title||x.video_id;
     const p=document.createElement("div");p.className="progress";const bar=document.createElement("div");bar.className="bar";bar.style.width=Math.min(100,Number(x.progress_percent||0))+"%";p.appendChild(bar);
     const meta=document.createElement("div");meta.className="meta";meta.textContent=x.completed_sentences+" / "+x.total_items+" 句 · "+x.error_count+" 次错误 · "+localDate(x.updated_at);
     const state=document.createElement("div");state.className=x.completed?"status-ok":"status-open";state.textContent=x.completed?"已完成":"未完成";
     info.append(title,p,meta,state);
     const action=document.createElement("div");if(!x.completed){const a=document.createElement("a");a.className="button";a.href="/?resume="+encodeURIComponent(x.id);a.textContent="继续练习";action.appendChild(a)}
-    row.append(img,info,action);host.appendChild(row);
+    row.append(thumb,info,action);host.appendChild(row);
   });
 }
 
