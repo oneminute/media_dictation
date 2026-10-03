@@ -6,6 +6,14 @@ from flask import Flask, jsonify, request, send_from_directory
 from dotenv import load_dotenv
 
 import llm_service
+from media_service import (
+    max_upload_bytes,
+    media_dir,
+    persist_uploaded_media,
+    resolve_media_path,
+    transcribe_media,
+    whisper_available,
+)
 from llm_service import (
     SENTENCE_PROMPT_VERSION,
     WORD_PROMPT_VERSION,
@@ -38,6 +46,7 @@ from storage import (
     export_learner_data,
     get_default_learner_id,
     get_learning_report,
+    get_media_source,
     get_review_sentences,
     get_schema_version,
     get_session_detail,
@@ -52,6 +61,7 @@ from storage import (
     record_practice_event,
     record_sentence_review,
     review_vocabulary,
+    save_media_source,
     save_translation,
     save_word_translation,
 )
@@ -59,6 +69,7 @@ from storage import (
 load_dotenv()
 
 app = Flask(__name__, static_folder="static")
+app.config["MAX_CONTENT_LENGTH"] = max_upload_bytes()
 init_db()
 
 def request_learner_id() -> int:
@@ -87,6 +98,67 @@ def review_center():
     return send_from_directory("static", "review.html")
 
 
+@app.get("/media/<media_id>")
+def media_file(media_id: str):
+    source = get_media_source(media_id)
+    if source is None:
+        return jsonify({"ok": False, "error": "找不到媒体文件。"}), 404
+
+    path = resolve_media_path(source["stored_filename"])
+    if not path.exists():
+        return jsonify({"ok": False, "error": "媒体文件已不存在。"}), 404
+
+    return send_from_directory(
+        str(media_dir()),
+        source["stored_filename"],
+        mimetype=source["mime_type"] or None,
+        conditional=True,
+    )
+
+
+@app.post("/api/media/transcribe")
+def transcribe_local_media():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "没有上传媒体文件。"}), 400
+
+    file_storage = request.files["file"]
+    try:
+        saved = persist_uploaded_media(file_storage)
+        source = save_media_source(
+            media_id=saved["id"],
+            original_name=saved["original_name"],
+            stored_filename=saved["stored_filename"],
+            mime_type=saved["mime_type"],
+            size_bytes=saved["size_bytes"],
+            title=saved["title"],
+            learner_id=request.form.get("learner_id"),
+        )
+
+        result = transcribe_media(saved["path"])
+        return jsonify(
+            {
+                "ok": True,
+                "source_type": "local",
+                "media_id": source["id"],
+                "video_id": source["id"],
+                "video_title": source["title"],
+                "source_url": f"/media/{source['id']}",
+                "segmentation_version": (
+                    f"{SEGMENTATION_VERSION}+whisper-word-timestamps"
+                ),
+                "language": result["language"],
+                "is_generated": True,
+                "items": result["items"],
+                "whisper_model": result["whisper_model"],
+                "whisper_device": result["whisper_device"],
+                "whisper_compute_type": result["whisper_compute_type"],
+                "duration": result["duration"],
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"本地媒体转写失败：{exc}"}), 500
+
+
 @app.get("/api/health")
 def health():
     _, proxy_mode = build_youtube_api()
@@ -101,6 +173,10 @@ def health():
             "sqlite_enabled": True,
             "schema_version": get_schema_version(),
             "segmentation_version": SEGMENTATION_VERSION,
+            "whisper_available": whisper_available(),
+            "whisper_model": os.getenv("WHISPER_MODEL", "small.en"),
+            "whisper_device": os.getenv("WHISPER_DEVICE", "auto"),
+            "media_max_upload_mb": max_upload_bytes() // (1024 * 1024),
             "llm_provider": provider,
             "translation_enabled": (
                 local_ready
@@ -198,6 +274,12 @@ def start_session():
             items=items,
             segmentation_version=str(
                 payload.get("segmentation_version", SEGMENTATION_VERSION)
+            ),
+            source_type=str(payload.get("source_type", "youtube") or "youtube"),
+            media_id=(
+                str(payload.get("media_id")).strip()
+                if payload.get("media_id")
+                else None
             ),
         )
         return jsonify({"ok": True, "session_id": session_id})
