@@ -182,6 +182,37 @@ class StorageV2Tests(unittest.TestCase):
             )
         )
 
+    def test_sentence_review_and_export(self):
+        learner = storage.create_learner("Exporter")
+        session_id = storage.create_session(
+            video_id="export01",
+            source_url="https://youtu.be/export01",
+            language="English",
+            is_generated=False,
+            total_items=1,
+            learner_id=learner["id"],
+            video_title="Export Video",
+            items=[{"text": "review me", "start": 0, "end": 1, "duration": 1}],
+        )
+        storage.record_sentence_review(
+            learner_id=learner["id"],
+            original_session_id=session_id,
+            sentence_index=0,
+            sentence_text="review me",
+            answer_before="review me",
+            is_correct=True,
+        )
+        stats = storage.get_sentence_review_stats(learner["id"], 30)
+        self.assertEqual(stats["attempts"], 1)
+        self.assertEqual(stats["accuracy"], 100.0)
+
+        exported = storage.export_learner_data(learner["id"])
+        self.assertEqual(exported["learner"]["name"], "Exporter")
+        self.assertEqual(len(exported["sessions"]), 1)
+        self.assertEqual(len(exported["practice_items"]), 1)
+        self.assertEqual(len(exported["sentence_reviews"]), 1)
+        self.assertEqual(exported["export_version"], 1)
+
     def test_vocabulary_supports_multiple_meanings_and_review(self):
         learner = storage.create_learner("Vocabulary")
         first = storage.add_vocabulary_word(
