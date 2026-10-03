@@ -177,10 +177,18 @@ def transcribe_media(path: Path) -> dict[str, Any]:
     for device, compute_type in _device_candidates():
         model = None
         try:
+            download_root = os.getenv("WHISPER_DOWNLOAD_ROOT", "").strip()
+            model_kwargs = {
+                "device": device,
+                "compute_type": compute_type,
+            }
+            if download_root:
+                Path(download_root).mkdir(parents=True, exist_ok=True)
+                model_kwargs["download_root"] = download_root
+
             model = WhisperModel(
                 model_name,
-                device=device,
-                compute_type=compute_type,
+                **model_kwargs,
             )
             segments, info = model.transcribe(
                 str(path),
