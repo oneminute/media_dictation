@@ -20,11 +20,17 @@ SENTENCE_PROMPT_VERSION = "sentence-v2"
 WORD_PROMPT_VERSION = "word-v2"
 
 
-def llm_provider() -> str:
-    provider = os.getenv("LLM_PROVIDER", "auto").strip().lower() or "auto"
+def normalize_provider(value: str | None) -> str:
+    provider = str(value or "").strip().lower()
+    if provider in {"", "default"}:
+        provider = os.getenv("LLM_PROVIDER", "auto").strip().lower() or "auto"
     if provider not in {"auto", "ollama", "openai"}:
-        raise RuntimeError("LLM_PROVIDER 必须是 auto、ollama 或 openai。")
+        raise RuntimeError("LLM provider 必须是 auto、ollama 或 openai。")
     return provider
+
+
+def llm_provider() -> str:
+    return normalize_provider(None)
 
 
 def ollama_base_url() -> str:
@@ -196,8 +202,11 @@ def translate_to_chinese_ollama(
     return translation, f"ollama:{model}", "local"
 
 
-def translate_to_chinese(text: str) -> tuple[str, str, str]:
-    provider = llm_provider()
+def translate_to_chinese(
+    text: str,
+    provider_override: str | None = None,
+) -> tuple[str, str, str]:
+    provider = normalize_provider(provider_override)
     if provider == "ollama":
         return translate_to_chinese_ollama(text)
     if provider == "openai":
@@ -303,8 +312,9 @@ def translate_word_in_context_ollama(
 def translate_word_in_context(
     word: str,
     context_sentence: str,
+    provider_override: str | None = None,
 ) -> tuple[str, str, str]:
-    provider = llm_provider()
+    provider = normalize_provider(provider_override)
     if provider == "ollama":
         return translate_word_in_context_ollama(word, context_sentence)
     if provider == "openai":
@@ -332,8 +342,12 @@ def result_identity(model_label: str) -> tuple[str, str]:
     return "openai", model_label
 
 
-def cache_candidates(*, word: bool = False) -> list[tuple[str, str]]:
-    provider = llm_provider()
+def cache_candidates(
+    *,
+    word: bool = False,
+    provider_override: str | None = None,
+) -> list[tuple[str, str]]:
+    provider = normalize_provider(provider_override)
     local_model = ollama_model(
         "OLLAMA_WORD_MODEL" if word else "OLLAMA_TRANSLATION_MODEL"
     )
