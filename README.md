@@ -1,6 +1,6 @@
 # Media Dictation
 
-A local-first English listening and dictation trainer for YouTube content.
+A local-first English listening and dictation trainer for YouTube and local media.
 
 Media Dictation is designed for long-term practice on a home PC. It combines
 sentence-by-sentence playback, keyboard-first dictation, learning history,
