@@ -67,6 +67,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(detail["items"]), 2)
         self.assertEqual(detail["video_title"], "API Video")
 
+    def test_export_endpoint(self):
+        learner = self.client.post(
+            "/api/learners",
+            json={"name": "Export API Student"},
+        ).get_json()["learner"]
+        response = self.client.get(
+            "/api/export?learner_id=" + str(learner["id"])
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["learner"]["name"], "Export API Student")
+        self.assertIn("sessions", data)
+        self.assertIn("vocabulary", data)
+
     def test_auto_router_falls_back_to_openai(self):
         with patch.object(llm_service, "llm_provider", return_value="auto"), patch.object(
             llm_service,
