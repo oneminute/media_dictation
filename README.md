@@ -168,7 +168,8 @@ The Learning Center shows:
 - word-lookup count;
 - estimated practice time;
 - frequent errors;
-- internal listening-dictation performance indicator.
+- internal listening-dictation performance indicator;
+- on-demand 30-day AI learning summary with a concrete 7-day practice plan.
 
 The performance indicator is **not CEFR**. It is intended for tracking a
 learner against their own history.
@@ -265,8 +266,18 @@ http://192.168.1.25:8765
 
 Both PCs must be on the same trusted private network.
 
-Do not forward port 8765 through the router. The LAN UI currently has no login
-authentication.
+Do not forward port 8765 through the router.
+
+Optional household PIN protection is available:
+
+```env
+MEDIA_DICTATION_PIN=2468
+```
+
+When set, browsers must log in once before accessing pages, APIs, or local
+media. Leave it blank to keep the previous no-login behavior. You may also set
+`MEDIA_DICTATION_SECRET_KEY` if you want login sessions to survive server
+restarts.
 
 ## Configuration
 
@@ -363,14 +374,22 @@ Coverage currently includes:
 - multi-meaning vocabulary;
 - spaced-review updates;
 - targeted sentence review;
-- learner export API.
+- learner export API;
+- local-media ingestion metadata and Whisper timestamp conversion;
+- optional household PIN protection;
+- per-request LLM provider override;
+- AI learning summary endpoint.
+
+CI also runs Node syntax checks against the inline JavaScript in all three
+browser pages.
 
 ## Project structure
 
 ```
 app.py                  Flask routes
 transcript_service.py   YouTube + caption cleanup + segmentation
-llm_service.py          Ollama/OpenAI providers + routing
+llm_service.py          Ollama/OpenAI providers, routing, AI summaries
+media_service.py        local media persistence + optional faster-whisper
 storage.py              SQLite schema, migrations, repositories, analytics
 
 static/
@@ -382,6 +401,7 @@ tests/
   test_segmentation.py
   test_storage_v2.py
   test_api_v2.py
+  test_media_service.py
 ```
 
 See `ARCHITECTURE.md` for design details and `ROADMAP.md` for remaining work.
