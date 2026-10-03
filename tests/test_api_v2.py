@@ -164,6 +164,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(data["media_id"], "media-api-1")
         self.assertEqual(data["items"][0]["text"], "hello world")
 
+    def test_narrative_report_endpoint(self):
+        learner = self.client.post(
+            "/api/learners",
+            json={"name": "Summary Student"},
+        ).get_json()["learner"]
+
+        with patch.object(
+            app,
+            "generate_learning_summary",
+            return_value=("总结内容", "ollama:test", "local"),
+        ) as summary_mock:
+            response = self.client.post(
+                "/api/report/narrative",
+                json={
+                    "learner_id": learner["id"],
+                    "provider": "ollama",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["summary"], "总结内容")
+        self.assertEqual(data["service_tier"], "local")
+        self.assertEqual(summary_mock.call_args.kwargs["provider_override"], "ollama")
+        report_arg = summary_mock.call_args.args[0]
+        self.assertIn("thirty_days", report_arg)
+        self.assertNotIn("sessions", report_arg)
+
     def test_translate_honors_provider_override(self):
         with patch.object(app, "cache_candidates", return_value=[]), patch.object(
             app,
