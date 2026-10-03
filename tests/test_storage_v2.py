@@ -149,6 +149,80 @@ class StorageV2Tests(unittest.TestCase):
             0,
         )
 
+    def test_duplicate_correct_is_not_recorded_twice(self):
+        learner = storage.create_learner("No duplicate correct")
+        session_id = storage.create_session(
+            video_id="dedupe01",
+            source_url="https://youtu.be/dedupe01",
+            language="English",
+            is_generated=False,
+            total_items=1,
+            learner_id=learner["id"],
+            items=[{"text": "hello", "start": 0, "end": 1, "duration": 1}],
+        )
+        for _ in range(2):
+            storage.record_attempt(
+                session_id=session_id,
+                sentence_index=0,
+                sentence_text="hello",
+                answer_before="hello",
+                event_type="correct",
+            )
+        with storage.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM attempts
+                WHERE session_id = ?
+                  AND sentence_index = 0
+                  AND event_type = 'correct'
+                """,
+                (session_id,),
+            ).fetchone()
+        self.assertEqual(int(row["n"]), 1)
+
+    def test_cross_day_completion_does_not_become_first_pass_today(self):
+        learner = storage.create_learner("Cross day")
+        session_id = storage.create_session(
+            video_id="crossday",
+            source_url="https://youtu.be/crossday",
+            language="English",
+            is_generated=False,
+            total_items=1,
+            learner_id=learner["id"],
+            items=[{"text": "hello", "start": 0, "end": 1, "duration": 1}],
+        )
+        storage.record_attempt(
+            session_id=session_id,
+            sentence_index=0,
+            sentence_text="hello",
+            answer_before="helo",
+            event_type="replace",
+            wrong_word="helo",
+            correct_word="hello",
+        )
+        with storage.connect() as conn:
+            conn.execute(
+                """
+                UPDATE attempts
+                SET created_at = datetime('now', '-1 day')
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            )
+
+        storage.record_attempt(
+            session_id=session_id,
+            sentence_index=0,
+            sentence_text="hello",
+            answer_before="hello",
+            event_type="correct",
+        )
+        today = storage.get_learning_report(learner["id"])["today"]
+        self.assertEqual(today["completed_sentences"], 1)
+        self.assertEqual(today["attempted_sentences"], 0)
+        self.assertIsNone(today["first_pass_accuracy"])
+
     def test_learning_events_feed_metrics(self):
         learner = storage.create_learner("Metrics")
         session_id = storage.create_session(
@@ -266,7 +340,15 @@ class StorageV2Tests(unittest.TestCase):
 
         reviewed = storage.review_vocabulary(first["id"], "good")
         self.assertEqual(reviewed["review_count"], 1)
-        self.assertGreaterEqual(reviewed["review_stage"], 1)
+        self.assertEqual(reviewed["review_stage"], 1)
+
+        from datetime import datetime, timezone
+        due = datetime.strptime(reviewed["due_at"], "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+        delta_hours = (due - datetime.now(timezone.utc)).total_seconds() / 3600
+        self.assertGreater(delta_hours, 22)
+        self.assertLess(delta_hours, 26)
 
 
 if __name__ == "__main__":
