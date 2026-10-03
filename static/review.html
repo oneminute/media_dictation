@@ -10,7 +10,7 @@
 .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px}h1{margin:0;font-size:28px}.sub,.meta{color:var(--muted)}.sub{margin-top:5px}.meta{font-size:13px}
 a,button{border:0;border-radius:9px;padding:9px 12px;font-weight:700;text-decoration:none;cursor:pointer}a{background:#e8efff;color:#1749b3}button{background:#e5e7eb}button.primary{background:var(--primary);color:#fff}
 select{padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff}
-#player{width:100%;aspect-ratio:16/9;background:#111;border-radius:12px;overflow:hidden}
+#player,#mediaPlayer{width:100%;aspect-ratio:16/9;background:#111;border-radius:12px;overflow:hidden}#mediaPlayer{display:none}
 .source{margin:14px 0;padding:14px;border:1px dashed #cbd5e1;border-radius:12px;font-size:20px;line-height:1.55;text-align:center;background:#f8fafc}
 .hidden{filter:blur(7px);user-select:none}.answer{width:100%;min-height:110px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:17px}
 .feedback{min-height:25px;margin-top:10px}.ok{color:var(--ok);font-weight:700}.bad{color:var(--bad);font-weight:700}
@@ -28,6 +28,7 @@ select{padding:9px;border:1px solid var(--line);border-radius:9px;background:#ff
     <div id="meta" class="meta">正在读取…</div>
     <div class="progress"><div id="bar" class="bar"></div></div>
     <div id="player"></div>
+    <video id="mediaPlayer" controls preload="metadata"></video>
     <div id="source" class="source hidden">暂无句子</div>
     <div class="row">
       <button id="play" class="primary">▶ 重播</button>
@@ -59,17 +60,36 @@ async function loadItems(){
   const r=await fetch("/api/review-sentences?learner_id="+encodeURIComponent(learnerId)+"&limit=50"),d=await r.json();
   items=d.items||[];index=0;render();
 }
+function configurePlayer(x){
+  const y=document.getElementById("player"),m=document.getElementById("mediaPlayer");
+  if((x.source_type||"youtube")==="local"){
+    y.style.display="none";m.style.display="block";
+    if(m.getAttribute("src")!==x.source_url){m.src=x.source_url;m.load()}
+    if(ready&&player){try{player.pauseVideo()}catch(e){}}
+  }else{
+    y.style.display="block";m.style.display="none";try{m.pause()}catch(e){}
+    if(ready)player.cueVideoById(x.video_id);
+  }
+}
 function render(){
   if(!items.length){document.getElementById("meta").textContent="暂无错句记录。";document.getElementById("source").textContent="暂无句子";return}
-  const x=items[index];document.getElementById("meta").textContent=(index+1)+" / "+items.length+" · 历史错误 "+x.error_count+" 次 · "+(x.video_title||x.video_id);
+  const x=items[index];configurePlayer(x);document.getElementById("meta").textContent=(index+1)+" / "+items.length+" · 历史错误 "+x.error_count+" 次 · "+(x.video_title||x.video_id);
   document.getElementById("bar").style.width=((index+1)/items.length*100)+"%";
   const src=document.getElementById("source");src.textContent=x.text;src.classList.toggle("hidden",!reveal);
   document.getElementById("answer").value="";document.getElementById("feedback").textContent="";
   if(ready)player.cueVideoById(x.video_id);
 }
 function play(){
-  if(!ready||!items.length)return;const x=items[index];clearInterval(stopTimer);player.seekTo(x.start,true);player.playVideo();
-  stopTimer=setInterval(()=>{if(player.getCurrentTime()>=(x.end||x.start+x.duration)-.04){player.pauseVideo();clearInterval(stopTimer)}},40);
+  if(!items.length)return;const x=items[index];clearInterval(stopTimer);
+  const end=(x.end||x.start+x.duration)-.04;
+  if((x.source_type||"youtube")==="local"){
+    const m=document.getElementById("mediaPlayer");m.currentTime=Number(x.start||0);
+    const p=m.play();if(p&&p.catch)p.catch(()=>{});
+    stopTimer=setInterval(()=>{if(m.currentTime>=end||m.ended){m.pause();clearInterval(stopTimer)}},40);
+    return;
+  }
+  if(!ready)return;player.seekTo(x.start,true);player.playVideo();
+  stopTimer=setInterval(()=>{if(player.getCurrentTime()>=end){player.pauseVideo();clearInterval(stopTimer)}},40);
 }
 function move(d){if(!items.length)return;index=Math.max(0,Math.min(items.length-1,index+d));reveal=false;render();setTimeout(play,80)}
 async function check(){
@@ -97,7 +117,7 @@ document.getElementById("play").onclick=play;document.getElementById("prev").onc
 document.getElementById("show").onclick=()=>{reveal=!reveal;render()};document.getElementById("check").onclick=check;
 document.getElementById("answer").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();check()}});
 document.getElementById("learner").addEventListener("change",async function(){learnerId=Number(this.value);localStorage.setItem("mediaDictationLearnerId",String(learnerId));await loadItems()});
-window.onYouTubeIframeAPIReady=function(){player=new YT.Player("player",{height:"390",width:"640",videoId:"",playerVars:{playsinline:1,rel:0},events:{onReady:()=>{ready=true;if(items.length)player.cueVideoById(items[index].video_id)}}})};
+window.onYouTubeIframeAPIReady=function(){player=new YT.Player("player",{height:"390",width:"640",videoId:"",playerVars:{playsinline:1,rel:0},events:{onReady:()=>{ready=true;if(items.length&&(items[index].source_type||"youtube")==="youtube")player.cueVideoById(items[index].video_id)}}})};
 (async()=>{await loadLearners();await loadItems()})();
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
