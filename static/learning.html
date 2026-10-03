@@ -49,6 +49,11 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
   </div>
 
   <div class="card">
+    <div class="section-title"><h2>系统状态</h2><span class="small">不显示任何 API 密钥</span></div>
+    <div id="systemStatus" class="report">正在检查…</div>
+  </div>
+
+  <div class="card">
     <div class="section-title"><h2>今日</h2><span class="small" id="todaySummary"></span></div>
     <div class="grid">
       <div><div class="label">完成句子</div><div class="metric" id="todayCompleted">–</div></div>
@@ -151,6 +156,20 @@ function renderChips(id,items){
   items.forEach(x=>{const s=document.createElement("span");s.className="chip";s.textContent=x.word+" × "+x.count;host.appendChild(s)});
 }
 
+function renderSystemStatus(h){
+  const ollama = h.ollama_available
+    ? '<span style="color:#15803d;font-weight:700">可用</span>'
+    : '<span style="color:#b45309;font-weight:700">不可用</span>';
+  const openai = h.openai_enabled
+    ? '<span style="color:#15803d;font-weight:700">已配置</span>'
+    : '<span style="color:#667085">未配置</span>';
+  document.getElementById("systemStatus").innerHTML =
+    "默认 Provider：<b>"+String(h.llm_provider||"–")+"</b><br>"+
+    "Ollama："+ollama+" · "+String(h.ollama_translation_model||"–")+"<br>"+
+    "OpenAI："+openai+" · "+String(h.openai_translation_model||"–")+"<br>"+
+    "DB Schema：<b>v"+String(h.schema_version||"–")+"</b> · Segmentation：<b>"+String(h.segmentation_version||"–")+"</b>";
+}
+
 function renderReport(d){
   const t=d.today||{}, s=d.seven_days||{}, m=d.thirty_days||{}, o=d.overall||{}, a=d.assessment||{};
   document.getElementById("todayCompleted").textContent=num(t.completed_sentences);
@@ -221,14 +240,16 @@ function renderSessions(items){
 
 async function loadDashboard(){
   const q="?learner_id="+encodeURIComponent(activeLearnerId);
-  const [rr,hr,vr,dr]=await Promise.all([
+  const [rr,hr,vr,dr,sr]=await Promise.all([
     fetch("/api/report"+q),
     fetch("/api/history"+q+"&limit=100"),
     fetch("/api/vocabulary"+q+"&limit=200"),
-    fetch("/api/vocabulary"+q+"&limit=50&due=1")
+    fetch("/api/vocabulary"+q+"&limit=50&due=1"),
+    fetch("/api/health")
   ]);
-  const [r,h,v,d]=await Promise.all([rr.json(),hr.json(),vr.json(),dr.json()]);
+  const [r,h,v,d,s]=await Promise.all([rr.json(),hr.json(),vr.json(),dr.json(),sr.json()]);
   if(!r.ok)throw new Error(r.error||"报告读取失败");
+  if(s&&s.ok)renderSystemStatus(s);
   renderReport(r);renderSessions(h.sessions||[]);renderVocabulary("vocabulary",v.items||[],false);renderVocabulary("dueVocabulary",d.items||[],true);
 }
 
