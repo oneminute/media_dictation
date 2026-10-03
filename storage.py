@@ -1774,6 +1774,7 @@ def get_vocabulary_entry(entry_id: int) -> dict[str, Any] | None:
         "translation": row["meaning"],
         "review_stage": int(row["review_stage"] or 0),
         "review_count": int(row["review_count"] or 0),
+        "fsrs_card_json": row["fsrs_card_json"] or "",
         "due_at": row["due_at"],
         "last_reviewed_at": row["last_reviewed_at"],
         "created_at": row["created_at"],
@@ -2017,6 +2018,46 @@ def export_learner_data(
             (learner_id,),
         ).fetchall()
 
+        vocabulary_reviews = conn.execute(
+            """
+            SELECT
+                vr.id,
+                vr.entry_id,
+                vr.rating,
+                vr.review_datetime,
+                vr.review_duration_ms,
+                vr.card_json,
+                vr.due_at,
+                vr.created_at
+            FROM vocabulary_reviews vr
+            JOIN vocabulary_entries ve ON ve.id = vr.entry_id
+            WHERE ve.learner_id = ?
+            ORDER BY vr.id
+            """,
+            (learner_id,),
+        ).fetchall()
+
+        assessment_runs = conn.execute(
+            """
+            SELECT *
+            FROM assessment_runs
+            WHERE learner_id = ?
+            ORDER BY started_at, id
+            """,
+            (learner_id,),
+        ).fetchall()
+
+        assessment_responses = conn.execute(
+            """
+            SELECT ar.*
+            FROM assessment_responses ar
+            JOIN assessment_runs r ON r.id = ar.run_id
+            WHERE r.learner_id = ?
+            ORDER BY ar.id
+            """,
+            (learner_id,),
+        ).fetchall()
+
         media_rows = conn.execute(
             """
             SELECT
@@ -2052,6 +2093,15 @@ def export_learner_data(
             for row in reviews
         ],
         "media_sources": [dict(row) for row in media_rows],
+        "vocabulary_reviews": [dict(row) for row in vocabulary_reviews],
+        "assessment_runs": [dict(row) for row in assessment_runs],
+        "assessment_responses": [
+            {
+                **dict(row),
+                "exact_correct": bool(row["exact_correct"]),
+            }
+            for row in assessment_responses
+        ],
         "vocabulary": [
             item
             for item in (
@@ -2606,8 +2656,21 @@ def import_learner_data(
     events = payload.get("practice_events") or []
     reviews = payload.get("sentence_reviews") or []
     vocab = payload.get("vocabulary") or []
+    vocab_reviews = payload.get("vocabulary_reviews") or []
+    assessment_runs = payload.get("assessment_runs") or []
+    assessment_responses = payload.get("assessment_responses") or []
 
-    collections = [sessions, items, attempts, events, reviews, vocab]
+    collections = [
+        sessions,
+        items,
+        attempts,
+        events,
+        reviews,
+        vocab,
+        vocab_reviews,
+        assessment_runs,
+        assessment_responses,
+    ]
     if not all(isinstance(x, list) for x in collections):
         raise ValueError("Import arrays are malformed.")
 
@@ -2648,6 +2711,20 @@ def import_learner_data(
             media_id=None,
         )
         id_map[old_id] = new_id
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE practice_sessions
+                SET started_at = COALESCE(?, started_at),
+                    updated_at = COALESCE(?, updated_at)
+                WHERE id = ?
+                """,
+                (
+                    raw_session.get("started_at"),
+                    raw_session.get("updated_at"),
+                    new_id,
+                ),
+            )
 
     with connect() as conn:
         for a in attempts:
@@ -2719,19 +2796,23 @@ def import_learner_data(
                 ),
             )
 
+    vocab_entry_map: dict[int, int] = {}
     for v in vocab:
         normalized = str(v.get("normalized_word", "")).strip()
         display = str(v.get("word", "")).strip()
         meaning = str(v.get("translation", "")).strip()
         if not normalized or not display or not meaning:
             continue
+
         occurrences = v.get("occurrences") or []
         if not occurrences:
             occurrences = [
                 {"context_sentence": str(v.get("context_sentence", ""))}
             ]
+
+        imported_entry = None
         for occurrence in occurrences:
-            add_vocabulary_word(
+            imported_entry = add_vocabulary_word(
                 normalized_word=normalized,
                 display_word=display,
                 translation=meaning,
@@ -2739,6 +2820,144 @@ def import_learner_data(
                 video_id=occurrence.get("video_id"),
                 source_url=occurrence.get("source_url"),
                 learner_id=learner_id,
+            )
+
+        if imported_entry is None:
+            continue
+
+        old_entry_id = int(v.get("id", 0) or 0)
+        new_entry_id = int(imported_entry["id"])
+        if old_entry_id:
+            vocab_entry_map[old_entry_id] = new_entry_id
+
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE vocabulary_entries
+                SET review_stage = ?,
+                    review_count = ?,
+                    due_at = COALESCE(?, due_at),
+                    last_reviewed_at = ?,
+                    fsrs_card_json = ?,
+                    created_at = COALESCE(?, created_at),
+                    updated_at = COALESCE(?, updated_at)
+                WHERE id = ?
+                """,
+                (
+                    int(v.get("review_stage", 0) or 0),
+                    int(v.get("review_count", 0) or 0),
+                    v.get("due_at"),
+                    v.get("last_reviewed_at"),
+                    str(v.get("fsrs_card_json", "") or ""),
+                    v.get("created_at"),
+                    v.get("updated_at"),
+                    new_entry_id,
+                ),
+            )
+
+    with connect() as conn:
+        for vr in vocab_reviews:
+            old_entry_id = int(vr.get("entry_id", 0) or 0)
+            new_entry_id = vocab_entry_map.get(old_entry_id)
+            if not new_entry_id:
+                continue
+            conn.execute(
+                """
+                INSERT INTO vocabulary_reviews (
+                    entry_id,
+                    rating,
+                    review_datetime,
+                    review_duration_ms,
+                    card_json,
+                    due_at,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                """,
+                (
+                    new_entry_id,
+                    str(vr.get("rating", "")),
+                    str(vr.get("review_datetime", "")),
+                    vr.get("review_duration_ms"),
+                    str(vr.get("card_json", "")),
+                    str(vr.get("due_at", "")),
+                    vr.get("created_at"),
+                ),
+            )
+
+    # Assessment history is imported with fresh run IDs to avoid collisions
+    # when the same export is restored more than once.
+    assessment_id_map: dict[str, str] = {}
+    for run in assessment_runs:
+        old_run_id = str(run.get("id", ""))
+        if not old_run_id:
+            continue
+        new_run_id = f"import-{learner_id}-{len(assessment_id_map) + 1}-{old_run_id}"
+        assessment_id_map[old_run_id] = new_run_id
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO assessment_runs (
+                    id,
+                    learner_id,
+                    assessment_version,
+                    started_at,
+                    completed_at,
+                    total_items,
+                    correct_items,
+                    total_replays,
+                    score,
+                    estimated_level,
+                    confidence
+                )
+                VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_run_id,
+                    learner_id,
+                    str(run.get("assessment_version", "")),
+                    run.get("started_at"),
+                    run.get("completed_at"),
+                    int(run.get("total_items", 0) or 0),
+                    int(run.get("correct_items", 0) or 0),
+                    int(run.get("total_replays", 0) or 0),
+                    run.get("score"),
+                    str(run.get("estimated_level", "")),
+                    str(run.get("confidence", "")),
+                ),
+            )
+
+    with connect() as conn:
+        for response in assessment_responses:
+            new_run_id = assessment_id_map.get(str(response.get("run_id", "")))
+            if not new_run_id:
+                continue
+            conn.execute(
+                """
+                INSERT INTO assessment_responses (
+                    run_id,
+                    item_id,
+                    level,
+                    expected_text,
+                    answer_text,
+                    token_accuracy,
+                    exact_correct,
+                    replays,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                """,
+                (
+                    new_run_id,
+                    str(response.get("item_id", "")),
+                    str(response.get("level", "")),
+                    str(response.get("expected_text", "")),
+                    str(response.get("answer_text", "")),
+                    float(response.get("token_accuracy", 0) or 0),
+                    1 if response.get("exact_correct") else 0,
+                    int(response.get("replays", 0) or 0),
+                    response.get("created_at"),
+                ),
             )
 
     with connect() as conn:
@@ -2769,6 +2988,8 @@ def import_learner_data(
         "learner": learner,
         "imported_sessions": len(id_map),
         "imported_vocabulary": len(vocab),
+        "imported_vocabulary_reviews": len(vocab_reviews),
+        "imported_assessments": len(assessment_id_map),
         "warning": (
             "JSON restores learning data only. Local audio/video binaries "
             "must be restored from a full backup separately."
