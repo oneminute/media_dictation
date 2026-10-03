@@ -42,6 +42,7 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
     <div class="toolbar">
       <select id="learnerSelect"></select>
       <button id="addLearner">+ 学习者</button>
+      <button id="exportData">导出数据</button>
       <a class="button" href="/review">错句复习</a>
       <a class="button" href="/">返回听写</a>
     </div>
@@ -231,11 +232,27 @@ async function loadDashboard(){
   renderReport(r);renderSessions(h.sessions||[]);renderVocabulary("vocabulary",v.items||[],false);renderVocabulary("dueVocabulary",d.items||[],true);
 }
 
+async function exportData(){
+  try{
+    const r=await fetch("/api/export?learner_id="+encodeURIComponent(activeLearnerId));
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(d.error||"导出失败");
+    const name=(d.learner&&d.learner.name?d.learner.name:"learner").replace(/[^\p{L}\p{N}_-]+/gu,"_");
+    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
+    const blob=new Blob([JSON.stringify(d,null,2)],{type:"application/json;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download="media_dictation_"+name+"_"+stamp+".json";
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  }catch(e){alert(String(e.message||e))}
+}
+
 document.getElementById("learnerSelect").addEventListener("change",async function(){
   activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));
   try{await loadDashboard()}catch(e){alert(String(e.message||e))}
 });
 document.getElementById("addLearner").addEventListener("click",addLearner);
+document.getElementById("exportData").addEventListener("click",exportData);
 
 (async function(){
   try{await loadLearners();await loadDashboard()}
