@@ -202,6 +202,11 @@ button.warn{background:#fef3c7;color:#92400e}
     </div>
     <div class="top-actions">
       <select id="learnerSelect" class="learner-select" title="当前学习者"></select>
+      <select id="llmProviderSelect" class="learner-select" title="翻译模型来源">
+        <option value="auto">LLM: Auto</option>
+        <option value="ollama">LLM: Local Qwen</option>
+        <option value="openai">LLM: OpenAI</option>
+      </select>
       <button id="addLearner" class="small-button">+ 学习者</button>
       <a href="/review">错句复习</a>
       <a href="/learning">学习中心</a>
@@ -299,6 +304,7 @@ let videoTitle = "";
 let segmentationVersion = "";
 let sessionId = null;
 let activeLearnerId = null;
+let activeLlmProvider = localStorage.getItem("mediaDictationLlmProvider") || "auto";
 let sentenceStartedAt = Date.now();
 let stopTimer = null;
 const translationCache = new Map();
@@ -509,7 +515,8 @@ async function lookupWord(word) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         word: word,
-        context: context
+        context: context,
+        provider: activeLlmProvider
       }),
       signal: controller.signal
     });
@@ -984,7 +991,10 @@ async function translateCurrent() {
     const response = await fetch("/api/translate", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({text: source}),
+      body: JSON.stringify({
+        text: source,
+        provider: activeLlmProvider
+      }),
       signal: controller.signal
     });
 
@@ -1179,6 +1189,12 @@ document.getElementById("learnerSelect").addEventListener("change", function () 
   activeLearnerId = Number(this.value || 0);
   localStorage.setItem("mediaDictationLearnerId", String(activeLearnerId));
 });
+document.getElementById("llmProviderSelect").addEventListener("change", function () {
+  activeLlmProvider = this.value || "auto";
+  localStorage.setItem("mediaDictationLlmProvider", activeLlmProvider);
+  translationCache.clear();
+  wordLookupCache.clear();
+});
 document.getElementById("addLearner").addEventListener("click", addLearner);
 document.getElementById("load").addEventListener("click", function () {
   loadVideo();
@@ -1259,6 +1275,13 @@ window.addEventListener(
 
 async function bootstrap() {
   try {
+    const providerSelect = document.getElementById("llmProviderSelect");
+    if (["auto","ollama","openai"].includes(activeLlmProvider)) {
+      providerSelect.value = activeLlmProvider;
+    } else {
+      activeLlmProvider = "auto";
+      providerSelect.value = "auto";
+    }
     await loadLearners();
     await resumeFromQuery();
   } catch (error) {
