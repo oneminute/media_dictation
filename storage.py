@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_LEARNER_NAME = "Default"
 
 
@@ -129,6 +129,26 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_practice_events_created
                 ON practice_events(created_at);
+
+            CREATE TABLE IF NOT EXISTS sentence_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                learner_id INTEGER NOT NULL,
+                original_session_id INTEGER NOT NULL,
+                sentence_index INTEGER NOT NULL,
+                sentence_text TEXT NOT NULL,
+                answer_before TEXT NOT NULL DEFAULT '',
+                is_correct INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(learner_id)
+                    REFERENCES learners(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY(original_session_id)
+                    REFERENCES practice_sessions(id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sentence_reviews_learner
+                ON sentence_reviews(learner_id, created_at);
 
             CREATE TABLE IF NOT EXISTS translations (
                 source_text TEXT PRIMARY KEY,
@@ -1009,6 +1029,7 @@ def get_learning_report(
         "thirty_days": thirty_days,
         "overall": overall,
         "assessment": _performance_assessment(thirty_days if thirty_days["attempted_sentences"] >= 10 else overall),
+        "sentence_review": get_sentence_review_stats(learner_id, 30),
         "top_errors": [
             {"word": row["word"], "count": int(row["count"])}
             for row in top_errors
@@ -1083,6 +1104,79 @@ def get_review_sentences(
         }
         for row in rows
     ]
+
+
+def record_sentence_review(
+    *,
+    learner_id: int | None,
+    original_session_id: int,
+    sentence_index: int,
+    sentence_text: str,
+    answer_before: str,
+    is_correct: bool,
+) -> None:
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO sentence_reviews (
+                learner_id,
+                original_session_id,
+                sentence_index,
+                sentence_text,
+                answer_before,
+                is_correct
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                learner_id,
+                int(original_session_id),
+                max(0, int(sentence_index)),
+                sentence_text,
+                answer_before,
+                1 if is_correct else 0,
+            ),
+        )
+
+
+def get_sentence_review_stats(
+    learner_id: int | None = None,
+    days: int | None = 30,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+    params: list[Any] = [learner_id]
+    window = ""
+    if days is not None:
+        if days <= 1:
+            window = "AND date(created_at, 'localtime') = date('now', 'localtime')"
+        else:
+            window = (
+                "AND datetime(created_at, 'localtime') >= "
+                "datetime('now', 'localtime', ?)"
+            )
+            params.append(f"-{days - 1} days")
+
+    with connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS attempts,
+                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct
+            FROM sentence_reviews
+            WHERE learner_id = ?
+            {window}
+            """,
+            tuple(params),
+        ).fetchone()
+
+    attempts = int(row["attempts"] or 0)
+    correct = int(row["correct"] or 0)
+    return {
+        "attempts": attempts,
+        "correct": correct,
+        "accuracy": round(correct * 100.0 / attempts, 1) if attempts else None,
+    }
 
 
 def get_translation(
