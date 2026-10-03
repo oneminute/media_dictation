@@ -1779,51 +1779,108 @@ def get_vocabulary(
 def review_vocabulary(
     entry_id: int,
     rating: str,
+    review_duration_ms: int | None = None,
 ) -> dict[str, Any]:
-    rating = str(rating or "").strip().lower()
-    if rating not in {"again", "hard", "good", "easy"}:
+    """Schedule a vocabulary card with py-fsrs (FSRS-6)."""
+    rating_key = str(rating or "").strip().lower()
+    rating_names = {
+        "again": "Again",
+        "hard": "Hard",
+        "good": "Good",
+        "easy": "Easy",
+    }
+    if rating_key not in rating_names:
         raise ValueError("rating must be again, hard, good, or easy")
+
+    try:
+        from fsrs import Card, Rating, Scheduler
+    except Exception as exc:
+        raise RuntimeError(
+            "FSRS scheduler is unavailable. Run setup_windows.bat."
+        ) from exc
+
+    raw_retention = os.getenv("FSRS_DESIRED_RETENTION", "0.90").strip()
+    try:
+        desired_retention = min(0.99, max(0.70, float(raw_retention)))
+    except ValueError:
+        desired_retention = 0.90
+
+    scheduler = Scheduler(
+        desired_retention=desired_retention,
+        enable_fuzzing=False,
+    )
+    rating_enum = getattr(Rating, rating_names[rating_key])
+    now = datetime.now(timezone.utc)
 
     with connect() as conn:
         row = conn.execute(
-            "SELECT review_stage FROM vocabulary_entries WHERE id = ?",
+            """
+            SELECT fsrs_card_json
+            FROM vocabulary_entries
+            WHERE id = ?
+            """,
             (int(entry_id),),
         ).fetchone()
         if row is None:
             raise ValueError("Vocabulary entry not found.")
 
-        stage = int(row["review_stage"] or 0)
-        if rating == "again":
-            next_stage = 0
-            delay = "+10 minutes"
-        elif rating == "hard":
-            next_stage = max(1, stage)
-            delay = "+1 day"
-        elif rating == "good":
-            next_stage = min(stage + 1, 8)
-            interval_days = [0, 1, 3, 7, 14, 30, 60, 120, 240]
-            delay = f"+{interval_days[next_stage]} days"
-        else:
-            next_stage = min(stage + 2, 8)
-            interval_days = [0, 1, 3, 7, 14, 30, 60, 120, 240]
-            delay = f"+{interval_days[next_stage]} days"
+        stored_card = str(row["fsrs_card_json"] or "").strip()
+        card = Card.from_json(stored_card) if stored_card else Card()
+        card, review_log = scheduler.review_card(
+            card,
+            rating_enum,
+            review_datetime=now,
+            review_duration=(
+                max(0, int(review_duration_ms))
+                if review_duration_ms is not None
+                else None
+            ),
+        )
+
+        due_utc = card.due.astimezone(timezone.utc)
+        due_sql = due_utc.strftime("%Y-%m-%d %H:%M:%S")
+        card_json = card.to_json()
+        state_value = int(getattr(card.state, "value", card.state))
 
         conn.execute(
             """
             UPDATE vocabulary_entries
-            SET
-                review_stage = ?,
+            SET review_stage = ?,
                 review_count = review_count + 1,
-                due_at = datetime('now', ?),
+                due_at = ?,
                 last_reviewed_at = CURRENT_TIMESTAMP,
+                fsrs_card_json = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (next_stage, delay, int(entry_id)),
+            (state_value, due_sql, card_json, int(entry_id)),
+        )
+        conn.execute(
+            """
+            INSERT INTO vocabulary_reviews (
+                entry_id, rating, review_datetime, review_duration_ms,
+                card_json, due_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(entry_id),
+                rating_key,
+                review_log.review_datetime.isoformat(),
+                (
+                    max(0, int(review_duration_ms))
+                    if review_duration_ms is not None
+                    else None
+                ),
+                card_json,
+                due_utc.isoformat(),
+            ),
         )
 
-    return get_vocabulary_entry(int(entry_id)) or {}
-
+    result = get_vocabulary_entry(int(entry_id)) or {}
+    result["scheduler"] = "FSRS-6"
+    result["desired_retention"] = desired_retention
+    return result
 
 def export_learner_data(
     learner_id: int | None = None,
