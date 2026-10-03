@@ -214,6 +214,8 @@ button.warn{background:#fef3c7;color:#92400e}
       </select>
       <button id="addLearner" class="small-button">+ 学习者</button>
       <a href="/review">错句复习</a>
+      <a href="/library">媒体库</a>
+      <a href="/assessment">水平评估</a>
       <a href="/learning">学习中心</a>
     </div>
   </div>
@@ -1183,6 +1185,41 @@ async function loadVideo(options) {
   }
 }
 
+async function waitForMediaJob(jobId) {
+  const status = document.getElementById("status");
+
+  while (true) {
+    const response = await fetch(
+      "/api/media/jobs/" + encodeURIComponent(jobId)
+    );
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "无法读取 Whisper 任务状态。");
+    }
+
+    const job = data.job || {};
+    const progress = Number(job.progress || 0);
+    const stage = job.stage || job.status || "处理中";
+    const detail = job.detail || "";
+
+    status.textContent =
+      "Whisper " + String(progress) + "% · " + stage +
+      (detail ? " · " + detail : "");
+
+    if (job.status === "completed") {
+      return job.result || {};
+    }
+    if (job.status === "failed" || job.status === "interrupted") {
+      throw new Error(job.error || job.detail || "Whisper 转写失败。");
+    }
+
+    await new Promise(function(resolve) {
+      window.setTimeout(resolve, 1000);
+    });
+  }
+}
+
 async function loadLocalMedia() {
   const fileInput = document.getElementById("mediaFile");
   const button = document.getElementById("loadMedia");
@@ -1190,31 +1227,43 @@ async function loadLocalMedia() {
   const file = fileInput.files && fileInput.files[0];
 
   if (!file) {
-    status.innerHTML = '<span class="error">请先选择一个本地音频或视频文件。</span>';
+    status.innerHTML =
+      '<span class="error">请先选择一个本地音频或视频文件。</span>';
     return;
   }
 
   button.disabled = true;
-  button.textContent = "正在转写…";
+  button.textContent = "正在提交…";
   status.textContent =
-    "正在上传并用 Whisper 转写。第一次会下载 Whisper 模型，较长媒体可能需要几分钟…";
+    "正在上传媒体。上传完成后 Whisper 会在后台转写，你可以看到实时进度。";
 
   const form = new FormData();
   form.append("file", file);
   form.append("learner_id", String(activeLearnerId || ""));
 
   try {
-    const response = await fetch("/api/media/transcribe", {
+    const response = await fetch("/api/media/jobs", {
       method: "POST",
       body: form
     });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || "本地媒体转写失败。");
+    const created = await response.json();
+
+    if (!response.ok || !created.ok) {
+      throw new Error(created.error || "无法创建 Whisper 转写任务。");
     }
 
+    const job = created.job || {};
+    if (!job.id) {
+      throw new Error("服务器没有返回转写任务 ID。");
+    }
+
+    button.textContent = "后台转写中…";
+    const data = await waitForMediaJob(job.id);
+
     items = data.items || [];
-    if (!items.length) throw new Error("Whisper 没有生成可用于听写的句子。");
+    if (!items.length) {
+      throw new Error("Whisper 没有生成可用于听写的句子。");
+    }
 
     sourceType = "local";
     mediaId = data.media_id;
