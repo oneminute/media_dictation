@@ -1780,6 +1780,23 @@ def export_learner_data(
             (learner_id,),
         ).fetchall()
 
+        media_rows = conn.execute(
+            """
+            SELECT
+                id,
+                original_name,
+                stored_filename,
+                mime_type,
+                size_bytes,
+                title,
+                created_at
+            FROM media_sources
+            WHERE learner_id = ?
+            ORDER BY created_at, id
+            """,
+            (learner_id,),
+        ).fetchall()
+
     return {
         "export_version": 1,
         "schema_version": get_schema_version(),
@@ -1797,6 +1814,7 @@ def export_learner_data(
             }
             for row in reviews
         ],
+        "media_sources": [dict(row) for row in media_rows],
         "vocabulary": [
             item
             for item in (
