@@ -2126,7 +2126,21 @@ def list_media_sources(
         rows = conn.execute(
             """
             SELECT
-                ms.*,
+                ms.id,
+                ms.learner_id,
+                ms.original_name,
+                ms.stored_filename,
+                ms.mime_type,
+                ms.size_bytes,
+                ms.title,
+                ms.transcription_status,
+                ms.language,
+                ms.duration,
+                ms.whisper_model,
+                ms.whisper_device,
+                ms.whisper_compute_type,
+                ms.created_at,
+                ms.updated_at,
                 COUNT(DISTINCT ps.id) AS session_count,
                 COALESCE(MAX(ps.updated_at), ms.updated_at, ms.created_at) AS last_used_at,
                 COALESCE(SUM(ps.completed_sentences), 0) AS completed_sentences,
