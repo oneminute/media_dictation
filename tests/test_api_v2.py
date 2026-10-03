@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import unittest
@@ -81,6 +82,62 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(data["learner"]["name"], "Export API Student")
         self.assertIn("sessions", data)
         self.assertIn("vocabulary", data)
+
+    def test_local_media_transcription_endpoint(self):
+        learner = self.client.post(
+            "/api/learners",
+            json={"name": "Media API Student"},
+        ).get_json()["learner"]
+
+        fake_path = Path(_tmp.name) / "fake.mp3"
+        fake_path.write_bytes(b"fake")
+
+        with patch.object(
+            app,
+            "persist_uploaded_media",
+            return_value={
+                "id": "media-api-1",
+                "original_name": "fake.mp3",
+                "stored_filename": "fake.mp3",
+                "path": fake_path,
+                "mime_type": "audio/mpeg",
+                "size_bytes": 4,
+                "title": "fake",
+            },
+        ), patch.object(
+            app,
+            "transcribe_media",
+            return_value={
+                "items": [
+                    {
+                        "text": "hello world",
+                        "start": 0.0,
+                        "end": 1.0,
+                        "duration": 1.0,
+                    }
+                ],
+                "language": "en",
+                "duration": 1.0,
+                "whisper_model": "test-whisper",
+                "whisper_device": "cpu",
+                "whisper_compute_type": "int8",
+            },
+        ):
+            response = self.client.post(
+                "/api/media/transcribe",
+                data={
+                    "learner_id": str(learner["id"]),
+                    "file": (io.BytesIO(b"fake"), "fake.mp3"),
+                },
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["source_type"], "local")
+        self.assertEqual(data["media_id"], "media-api-1")
+        self.assertEqual(data["items"][0]["text"], "hello world")
 
     def test_translate_honors_provider_override(self):
         with patch.object(app, "cache_candidates", return_value=[]), patch.object(
