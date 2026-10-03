@@ -8,6 +8,13 @@ from flask import Flask, jsonify, redirect, request, send_from_directory, sessio
 from dotenv import load_dotenv
 
 import llm_service
+from assessment_service import (
+    ASSESSMENT_VERSION,
+    assessment_items,
+    score_answer,
+    summarize_responses,
+)
+from job_service import enqueue_transcription
 from media_service import (
     max_upload_bytes,
     media_dir,
@@ -47,27 +54,40 @@ from storage import (
     add_vocabulary_word,
     create_learner,
     create_session,
+    create_transcription_job,
+    delete_media_source,
     export_learner_data,
+    finish_assessment_run,
+    get_assessment_run,
     get_default_learner_id,
     get_learning_report,
     get_media_source,
+    get_media_transcription,
     get_review_sentences,
     get_schema_version,
     get_session_detail,
     get_session_history,
     get_stats,
+    get_transcription_job,
     get_translation,
     get_vocabulary,
     get_word_translation,
+    import_learner_data,
     init_db,
+    latest_transcription_job,
+    list_assessment_runs,
     list_learners,
+    list_media_sources,
+    record_assessment_response,
     record_attempt,
     record_practice_event,
     record_sentence_review,
+    rename_media_source,
     review_vocabulary,
     save_media_source,
     save_translation,
     save_word_translation,
+    start_assessment_run,
 )
 
 load_dotenv()
@@ -202,6 +222,16 @@ def review_center():
     return send_from_directory("static", "review.html")
 
 
+@app.get("/library")
+def media_library():
+    return send_from_directory("static", "library.html")
+
+
+@app.get("/assessment")
+def assessment_center():
+    return send_from_directory("static", "assessment.html")
+
+
 @app.get("/media/<media_id>")
 def media_file(media_id: str):
     source = get_media_source(media_id)
@@ -218,6 +248,159 @@ def media_file(media_id: str):
         mimetype=source["mime_type"] or None,
         conditional=True,
     )
+
+
+@app.get("/api/media")
+def media_list():
+    try:
+        return jsonify(
+            {
+                "ok": True,
+                "items": list_media_sources(
+                    learner_id=request_learner_id(),
+                    limit=int(request.args.get("limit", "200")),
+                ),
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"媒体库读取失败：{exc}"}), 400
+
+
+@app.post("/api/media/jobs")
+def create_media_job():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "没有上传媒体文件。"}), 400
+
+    saved = None
+    try:
+        saved = persist_uploaded_media(request.files["file"])
+        learner_id = request.form.get("learner_id")
+        source = save_media_source(
+            media_id=saved["id"],
+            original_name=saved["original_name"],
+            stored_filename=saved["stored_filename"],
+            mime_type=saved["mime_type"],
+            size_bytes=saved["size_bytes"],
+            title=saved["title"],
+            learner_id=learner_id,
+        )
+        job_id = secrets.token_hex(16)
+        job = create_transcription_job(
+            job_id=job_id,
+            media_id=source["id"],
+            learner_id=learner_id,
+        )
+        enqueue_transcription(job_id)
+        return jsonify({"ok": True, "job": job}), 202
+    except Exception as exc:
+        if saved is not None:
+            try:
+                saved["path"].unlink(missing_ok=True)
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": f"创建转写任务失败：{exc}"}), 500
+
+
+@app.get("/api/media/jobs/<job_id>")
+def media_job_status(job_id: str):
+    job = get_transcription_job(job_id)
+    if job is None:
+        return jsonify({"ok": False, "error": "找不到转写任务。"}), 404
+    return jsonify({"ok": True, "job": job})
+
+
+@app.post("/api/media/<media_id>/transcribe")
+def retry_media_transcription(media_id: str):
+    source = get_media_source(media_id)
+    if source is None:
+        return jsonify({"ok": False, "error": "找不到媒体文件。"}), 404
+    path = resolve_media_path(source["stored_filename"])
+    if not path.exists():
+        return jsonify({"ok": False, "error": "媒体文件已不存在。"}), 404
+
+    try:
+        job_id = secrets.token_hex(16)
+        job = create_transcription_job(
+            job_id=job_id,
+            media_id=media_id,
+            learner_id=source.get("learner_id"),
+        )
+        enqueue_transcription(job_id)
+        return jsonify({"ok": True, "job": job}), 202
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"重新转写失败：{exc}"}), 500
+
+
+@app.get("/api/media/<media_id>/transcript")
+def media_transcript(media_id: str):
+    source = get_media_source(media_id)
+    if source is None:
+        return jsonify({"ok": False, "error": "找不到媒体文件。"}), 404
+
+    transcript = get_media_transcription(media_id)
+    if transcript is None:
+        job = latest_transcription_job(media_id)
+        return jsonify(
+            {
+                "ok": False,
+                "error": "该媒体还没有可用的转写结果。",
+                "job": job,
+            }
+        ), 409
+
+    return jsonify(
+        {
+            "ok": True,
+            "source_type": "local",
+            "media_id": source["id"],
+            "video_id": source["id"],
+            "video_title": source["title"] or source["original_name"],
+            "source_url": f"/media/{source['id']}",
+            "segmentation_version": (
+                f"{SEGMENTATION_VERSION}+whisper-word-timestamps"
+            ),
+            "language": transcript.get("language", "en"),
+            "is_generated": True,
+            "items": transcript.get("items", []),
+            "whisper_model": transcript.get("whisper_model", ""),
+            "whisper_device": transcript.get("whisper_device", ""),
+            "whisper_compute_type": transcript.get("whisper_compute_type", ""),
+            "duration": transcript.get("duration", 0),
+        }
+    )
+
+
+@app.patch("/api/media/<media_id>")
+def media_rename(media_id: str):
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = rename_media_source(
+            media_id,
+            str(payload.get("title", "")),
+            learner_id=payload.get("learner_id"),
+        )
+        return jsonify({"ok": True, "item": item})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"重命名失败：{exc}"}), 400
+
+
+@app.delete("/api/media/<media_id>")
+def media_delete(media_id: str):
+    learner_id = request.args.get("learner_id")
+    delete_sessions = request.args.get("delete_sessions", "0") in {
+        "1", "true", "yes"
+    }
+    try:
+        deleted = delete_media_source(
+            media_id,
+            learner_id=learner_id,
+            delete_sessions=delete_sessions,
+        )
+        path = resolve_media_path(deleted["stored_filename"])
+        path.unlink(missing_ok=True)
+        return jsonify({"ok": True, "deleted": deleted})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"删除媒体失败：{exc}"}), 400
 
 
 @app.post("/api/media/transcribe")
@@ -485,6 +668,19 @@ def export_data():
         return jsonify({"ok": False, "error": f"导出失败：{exc}"}), 400
 
 
+@app.post("/api/import")
+def import_data():
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = import_learner_data(
+            payload.get("data") if isinstance(payload.get("data"), dict) else payload,
+            learner_name=payload.get("learner_name"),
+        )
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"导入失败：{exc}"}), 400
+
+
 @app.get("/api/history")
 def history():
     try:
@@ -581,6 +777,103 @@ def review_sentences():
             "items": get_review_sentences(
                 learner_id=request_learner_id(),
                 limit=limit,
+            ),
+        }
+    )
+
+
+@app.post("/api/assessment/start")
+def assessment_start():
+    payload = request.get_json(silent=True) or {}
+    run_id = secrets.token_hex(16)
+    try:
+        start_assessment_run(
+            run_id,
+            payload.get("learner_id"),
+            ASSESSMENT_VERSION,
+            len(assessment_items()),
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "run_id": run_id,
+                "assessment_version": ASSESSMENT_VERSION,
+                "items": assessment_items(),
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"开始评估失败：{exc}"}), 400
+
+
+@app.post("/api/assessment/<run_id>/answer")
+def assessment_answer(run_id: str):
+    payload = request.get_json(silent=True) or {}
+    try:
+        scored = score_answer(
+            str(payload.get("item_id", "")),
+            str(payload.get("answer", "")),
+            int(payload.get("replays", 0) or 0),
+        )
+        record_assessment_response(
+            run_id=run_id,
+            item_id=scored["item_id"],
+            level=scored["level"],
+            expected_text=scored["expected_text"],
+            answer_text=str(payload.get("answer", "")),
+            token_accuracy=scored["token_accuracy"],
+            exact_correct=scored["exact_correct"],
+            replays=scored["replays"],
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "item_id": scored["item_id"],
+                "level": scored["level"],
+                "token_accuracy": scored["token_accuracy"],
+                "exact_correct": scored["exact_correct"],
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"保存评估答案失败：{exc}"}), 400
+
+
+@app.post("/api/assessment/<run_id>/finish")
+def assessment_finish(run_id: str):
+    run = get_assessment_run(run_id)
+    if run is None:
+        return jsonify({"ok": False, "error": "找不到评估记录。"}), 404
+
+    responses = []
+    for item in run.get("responses", []):
+        replay_penalty = min(0.18, int(item.get("replays", 0) or 0) * 0.035)
+        responses.append(
+            {
+                **item,
+                "adjusted_accuracy": max(
+                    0.0,
+                    float(item.get("token_accuracy", 0)) - replay_penalty,
+                ),
+            }
+        )
+
+    result = summarize_responses(responses)
+    saved = finish_assessment_run(
+        run_id,
+        score=result["score"],
+        estimated_level=result["estimated_level"],
+        confidence=result["confidence"],
+    )
+    return jsonify({"ok": True, "result": result, "run": saved})
+
+
+@app.get("/api/assessment/history")
+def assessment_history():
+    return jsonify(
+        {
+            "ok": True,
+            "items": list_assessment_runs(
+                learner_id=request_learner_id(),
+                limit=int(request.args.get("limit", "20")),
             ),
         }
     )
