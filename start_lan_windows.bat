@@ -23,6 +23,10 @@ if errorlevel 1 (
 )
 
 echo.
+echo Checking local Ollama...
+powershell -NoProfile -Command "try { $r = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2; Write-Host '  Ollama: AVAILABLE at http://127.0.0.1:11434' -ForegroundColor Green } catch { Write-Host '  Ollama: NOT AVAILABLE - auto mode will use OpenAI fallback if configured.' -ForegroundColor Yellow }"
+
+echo.
 echo Server port: 8765
 echo.
 echo Open on THIS computer:
