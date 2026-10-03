@@ -664,6 +664,29 @@ def record_attempt(
         raise ValueError(f"Unsupported event_type: {event_type}")
 
     with connect() as conn:
+        if event_type == "correct":
+            existing_correct = conn.execute(
+                """
+                SELECT 1
+                FROM attempts
+                WHERE session_id = ?
+                  AND sentence_index = ?
+                  AND event_type = 'correct'
+                LIMIT 1
+                """,
+                (int(session_id), max(0, int(sentence_index))),
+            ).fetchone()
+            if existing_correct is not None:
+                conn.execute(
+                    """
+                    UPDATE practice_sessions
+                    SET last_sentence_index = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (max(0, int(sentence_index)), int(session_id)),
+                )
+                return
+
         conn.execute(
             """
             INSERT INTO attempts (
@@ -962,6 +985,21 @@ def _window_summary(
             (learner_id, learner_id, *attempt_params),
         ).fetchone()
 
+        if days is None:
+            first_pass_window = ""
+            first_pass_params: tuple = ()
+        elif days <= 1:
+            first_pass_window = (
+                "AND date(created_at, 'localtime') = date('now', 'localtime')"
+            )
+            first_pass_params = ()
+        else:
+            first_pass_window = (
+                "AND datetime(created_at, 'localtime') >= "
+                "datetime('now', 'localtime', ?)"
+            )
+            first_pass_params = (f"-{days - 1} days",)
+
         first_pass = conn.execute(
             f"""
             WITH ranked AS (
@@ -969,6 +1007,7 @@ def _window_summary(
                     a.session_id,
                     a.sentence_index,
                     a.event_type,
+                    a.created_at,
                     ROW_NUMBER() OVER (
                         PARTITION BY a.session_id, a.sentence_index
                         ORDER BY a.id
@@ -976,7 +1015,6 @@ def _window_summary(
                 FROM attempts a
                 JOIN practice_sessions ps ON ps.id = a.session_id
                 WHERE COALESCE(ps.learner_id, ?) = ?
-                {attempt_window}
             )
             SELECT
                 COUNT(*) AS attempted_sentences,
@@ -984,8 +1022,9 @@ def _window_summary(
                     AS first_pass_correct
             FROM ranked
             WHERE rn = 1
+            {first_pass_window}
             """,
-            (learner_id, learner_id, *attempt_params),
+            (learner_id, learner_id, *first_pass_params),
         ).fetchone()
 
         events = conn.execute(
@@ -1663,12 +1702,12 @@ def review_vocabulary(
             delay = "+1 day"
         elif rating == "good":
             next_stage = min(stage + 1, 8)
-            intervals = [1, 3, 7, 14, 30, 60, 120, 240, 365]
-            delay = f"+{intervals[next_stage]} days"
+            interval_days = [0, 1, 3, 7, 14, 30, 60, 120, 240]
+            delay = f"+{interval_days[next_stage]} days"
         else:
             next_stage = min(stage + 2, 8)
-            intervals = [1, 3, 7, 14, 30, 60, 120, 240, 365]
-            delay = f"+{intervals[next_stage]} days"
+            interval_days = [0, 1, 3, 7, 14, 30, 60, 120, 240]
+            delay = f"+{interval_days[next_stage]} days"
 
         conn.execute(
             """
