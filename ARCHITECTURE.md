@@ -157,6 +157,15 @@ vocabulary into the current learner-aware representation.
 Before LAN production startup, the SQLite backup API creates a consistent copy
 under `backups/`.
 
+## AI learning summary
+
+The narrative 30-day report is generated on demand through the same LLM router.
+Only aggregate statistics, high-frequency errors, and review metrics are sent
+to the selected model. Full answer history is not included in the prompt.
+
+The prompt explicitly prevents the model from inventing CEFR levels or facts
+not present in the stored metrics.
+
 ## Assessment philosophy
 
 The regular practice score is an internal trend indicator based on observed
@@ -177,6 +186,7 @@ The current LAN mode assumes a trusted home/private network.
 - API keys remain server-side.
 - Ollama should stay bound locally.
 - port 8765 should not be exposed to the public Internet.
-- no account/password system exists yet.
-
-A lightweight LAN PIN/session layer is a remaining hardening item.
+- optional household PIN protection is available through
+  `MEDIA_DICTATION_PIN`;
+- the PIN uses a signed Flask session cookie and is intentionally a lightweight
+  household access layer, not a public-Internet account system.
