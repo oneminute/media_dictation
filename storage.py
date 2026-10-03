@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 10
 DEFAULT_LEARNER_NAME = "Default"
 
 
@@ -69,11 +69,40 @@ def init_db() -> None:
                 mime_type TEXT NOT NULL DEFAULT '',
                 size_bytes INTEGER NOT NULL DEFAULT 0,
                 title TEXT NOT NULL DEFAULT '',
+                transcription_status TEXT NOT NULL DEFAULT 'pending',
+                transcript_json TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                duration REAL NOT NULL DEFAULT 0,
+                whisper_model TEXT NOT NULL DEFAULT '',
+                whisper_device TEXT NOT NULL DEFAULT '',
+                whisper_compute_type TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(learner_id)
                     REFERENCES learners(id)
                     ON DELETE SET NULL
             );
+
+            CREATE TABLE IF NOT EXISTS transcription_jobs (
+                id TEXT PRIMARY KEY,
+                media_id TEXT NOT NULL,
+                learner_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                progress INTEGER NOT NULL DEFAULT 0,
+                stage TEXT NOT NULL DEFAULT 'queued',
+                detail TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '',
+                result_json TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at TEXT,
+                finished_at TEXT,
+                FOREIGN KEY(media_id) REFERENCES media_sources(id) ON DELETE CASCADE,
+                FOREIGN KEY(learner_id) REFERENCES learners(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_transcription_jobs_media
+                ON transcription_jobs(media_id, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS practice_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -269,6 +298,54 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_vocabulary_updated
                 ON vocabulary(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS vocabulary_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id INTEGER NOT NULL,
+                rating TEXT NOT NULL,
+                review_datetime TEXT NOT NULL,
+                review_duration_ms INTEGER,
+                card_json TEXT NOT NULL,
+                due_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(entry_id) REFERENCES vocabulary_entries(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_vocabulary_reviews_entry
+                ON vocabulary_reviews(entry_id, review_datetime);
+
+            CREATE TABLE IF NOT EXISTS assessment_runs (
+                id TEXT PRIMARY KEY,
+                learner_id INTEGER NOT NULL,
+                assessment_version TEXT NOT NULL,
+                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                total_items INTEGER NOT NULL DEFAULT 0,
+                correct_items INTEGER NOT NULL DEFAULT 0,
+                total_replays INTEGER NOT NULL DEFAULT 0,
+                score REAL,
+                estimated_level TEXT NOT NULL DEFAULT '',
+                confidence TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(learner_id) REFERENCES learners(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS assessment_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                level TEXT NOT NULL,
+                expected_text TEXT NOT NULL,
+                answer_text TEXT NOT NULL DEFAULT '',
+                token_accuracy REAL NOT NULL DEFAULT 0,
+                exact_correct INTEGER NOT NULL DEFAULT 0,
+                replays INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(run_id, item_id),
+                FOREIGN KEY(run_id) REFERENCES assessment_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_assessment_runs_learner
+                ON assessment_runs(learner_id, started_at DESC);
             """
         )
 
@@ -294,6 +371,28 @@ def init_db() -> None:
                 )
         else:
             default_id = int(default_row["id"])
+
+        _add_column_if_missing(conn, "media_sources", "transcription_status", "TEXT NOT NULL DEFAULT 'pending'")
+        _add_column_if_missing(conn, "media_sources", "transcript_json", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "media_sources", "language", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "media_sources", "duration", "REAL NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "media_sources", "whisper_model", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "media_sources", "whisper_device", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "media_sources", "whisper_compute_type", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "media_sources", "updated_at", "TEXT")
+        _add_column_if_missing(conn, "vocabulary_entries", "fsrs_card_json", "TEXT NOT NULL DEFAULT ''")
+
+        conn.execute(
+            """
+            UPDATE transcription_jobs
+            SET status = 'interrupted',
+                stage = 'interrupted',
+                detail = 'Server restarted before this job finished.',
+                updated_at = CURRENT_TIMESTAMP,
+                finished_at = CURRENT_TIMESTAMP
+            WHERE status IN ('queued', 'running')
+            """
+        )
 
         _add_column_if_missing(conn, "practice_sessions", "learner_id", "INTEGER")
         _add_column_if_missing(conn, "practice_sessions", "video_title", "TEXT")
