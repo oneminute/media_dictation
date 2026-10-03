@@ -340,15 +340,19 @@ class StorageV2Tests(unittest.TestCase):
 
         reviewed = storage.review_vocabulary(first["id"], "good")
         self.assertEqual(reviewed["review_count"], 1)
-        self.assertEqual(reviewed["review_stage"], 1)
+        self.assertEqual(reviewed["scheduler"], "FSRS-6")
 
         from datetime import datetime, timezone
         due = datetime.strptime(reviewed["due_at"], "%Y-%m-%d %H:%M:%S").replace(
             tzinfo=timezone.utc
         )
-        delta_hours = (due - datetime.now(timezone.utc)).total_seconds() / 3600
-        self.assertGreater(delta_hours, 22)
-        self.assertLess(delta_hours, 26)
+        delta_minutes = (
+            due - datetime.now(timezone.utc)
+        ).total_seconds() / 60
+        # py-fsrs default learning steps schedule a new Good card
+        # about ten minutes into the future.
+        self.assertGreater(delta_minutes, 8)
+        self.assertLess(delta_minutes, 12)
 
 
 if __name__ == "__main__":
