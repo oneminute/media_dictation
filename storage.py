@@ -1566,6 +1566,126 @@ def review_vocabulary(
     return get_vocabulary_entry(int(entry_id)) or {}
 
 
+def export_learner_data(
+    learner_id: int | None = None,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+
+    with connect() as conn:
+        learner = conn.execute(
+            """
+            SELECT id, name, created_at, updated_at
+            FROM learners
+            WHERE id = ?
+            """,
+            (learner_id,),
+        ).fetchone()
+        if learner is None:
+            raise ValueError("Learner not found.")
+
+        sessions = conn.execute(
+            """
+            SELECT
+                id, video_id, video_title, source_url, language, is_generated,
+                total_items, last_sentence_index, completed_sentences,
+                segmentation_version, started_at, updated_at
+            FROM practice_sessions
+            WHERE COALESCE(learner_id, ?) = ?
+            ORDER BY id
+            """,
+            (learner_id, learner_id),
+        ).fetchall()
+
+        attempts = conn.execute(
+            """
+            SELECT
+                a.id, a.session_id, a.sentence_index, a.sentence_text,
+                a.answer_before, a.event_type, a.wrong_word, a.correct_word,
+                a.created_at
+            FROM attempts a
+            JOIN practice_sessions ps ON ps.id = a.session_id
+            WHERE COALESCE(ps.learner_id, ?) = ?
+            ORDER BY a.id
+            """,
+            (learner_id, learner_id),
+        ).fetchall()
+
+        events = conn.execute(
+            """
+            SELECT
+                e.id, e.session_id, e.sentence_index, e.event_type,
+                e.value_ms, e.detail, e.created_at
+            FROM practice_events e
+            JOIN practice_sessions ps ON ps.id = e.session_id
+            WHERE COALESCE(ps.learner_id, ?) = ?
+            ORDER BY e.id
+            """,
+            (learner_id, learner_id),
+        ).fetchall()
+
+        reviews = conn.execute(
+            """
+            SELECT
+                id, original_session_id, sentence_index, sentence_text,
+                answer_before, is_correct, created_at
+            FROM sentence_reviews
+            WHERE learner_id = ?
+            ORDER BY id
+            """,
+            (learner_id,),
+        ).fetchall()
+
+        items = conn.execute(
+            """
+            SELECT
+                pi.session_id, pi.sentence_index, pi.text, pi.start,
+                pi.end, pi.duration
+            FROM practice_items pi
+            JOIN practice_sessions ps ON ps.id = pi.session_id
+            WHERE COALESCE(ps.learner_id, ?) = ?
+            ORDER BY pi.session_id, pi.sentence_index
+            """,
+            (learner_id, learner_id),
+        ).fetchall()
+
+        vocab_rows = conn.execute(
+            """
+            SELECT id
+            FROM vocabulary_entries
+            WHERE learner_id = ?
+            ORDER BY id
+            """,
+            (learner_id,),
+        ).fetchall()
+
+    return {
+        "export_version": 1,
+        "schema_version": get_schema_version(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "learner": dict(learner),
+        "report": get_learning_report(learner_id),
+        "sessions": [dict(row) for row in sessions],
+        "practice_items": [dict(row) for row in items],
+        "attempts": [dict(row) for row in attempts],
+        "practice_events": [dict(row) for row in events],
+        "sentence_reviews": [
+            {
+                **dict(row),
+                "is_correct": bool(row["is_correct"]),
+            }
+            for row in reviews
+        ],
+        "vocabulary": [
+            item
+            for item in (
+                get_vocabulary_entry(int(row["id"]))
+                for row in vocab_rows
+            )
+            if item is not None
+        ],
+    }
+
+
 def get_stats() -> dict[str, Any]:
     with connect() as conn:
         summary = conn.execute(
