@@ -25,7 +25,9 @@ Child / local browser
    /    |      \
   /     |       \
 SQLite  |      YouTube
-        |
+   |    |
+   |    +------ Local media / Whisper
+   |
    LLM router
     /      \
 Ollama   OpenAI
@@ -54,6 +56,27 @@ practice item with exact text/start/end/duration.
 This is important: **resume reads the saved snapshot**, not a newly segmented
 copy. Legacy sessions created before snapshots existed still use the old
 best-effort re-fetch path.
+
+## Local media transcription
+
+Local media is stored outside SQLite. SQLite stores metadata and practice
+references; the actual audio/video file stays in `MEDIA_DICTATION_MEDIA_DIR`.
+
+```
+browser upload
+ -> media_service.persist_uploaded_media
+ -> optional Ollama model unload
+ -> faster-whisper word timestamps
+ -> transcript_service.merge_caption_fragments
+ -> practice_items snapshot
+```
+
+The same session/report/vocabulary/review pipeline is used after ingestion, so
+YouTube and local-media learning data have the same semantics.
+
+For limited VRAM systems the default strategy is to release configured Ollama
+models before Whisper. Whisper then tries CUDA and automatically falls back to
+CPU when `WHISPER_DEVICE=auto`.
 
 ## Learning data model
 
