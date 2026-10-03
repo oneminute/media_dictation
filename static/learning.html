@@ -164,7 +164,9 @@ function renderReport(d){
   document.getElementById("assistStats").innerHTML=
     "30 天查看原文：<b>"+num(m.reveals)+"</b><br>"+
     "30 天整句翻译：<b>"+num(m.translations_used)+"</b><br>"+
-    "30 天单词查询：<b>"+num(m.word_lookups)+"</b>";
+    "30 天单词查询：<b>"+num(m.word_lookups)+"</b><br>"+
+    "30 天错句复习：<b>"+num((d.sentence_review||{}).attempts)+"</b> 次<br>"+
+    "错句复习正确率：<b>"+pct((d.sentence_review||{}).accuracy)+"</b>";
   renderChips("todayErrors",d.today_top_errors||[]);renderChips("topErrors",d.top_errors||[]);
 }
 
