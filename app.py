@@ -35,6 +35,7 @@ from storage import (
     add_vocabulary_word,
     create_learner,
     create_session,
+    export_learner_data,
     get_default_learner_id,
     get_learning_report,
     get_review_sentences,
@@ -263,6 +264,19 @@ def save_practice_event():
 @app.get("/api/stats")
 def stats():
     return jsonify({"ok": True, **get_stats()})
+
+
+@app.get("/api/export")
+def export_data():
+    try:
+        return jsonify(
+            {
+                "ok": True,
+                **export_learner_data(request_learner_id()),
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"导出失败：{exc}"}), 400
 
 
 @app.get("/api/history")
