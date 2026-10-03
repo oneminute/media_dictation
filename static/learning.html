@@ -41,6 +41,11 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
     </div>
     <div class="toolbar">
       <select id="learnerSelect"></select>
+      <select id="llmProviderSelect" title="AI总结模型来源">
+        <option value="auto">LLM: Auto</option>
+        <option value="ollama">LLM: Local Qwen</option>
+        <option value="openai">LLM: OpenAI</option>
+      </select>
       <button id="addLearner">+ 学习者</button>
       <button id="exportData">导出数据</button>
       <a class="button" href="/review">错句复习</a>
@@ -68,6 +73,15 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
     <div class="card"><div class="period">最近 7 天</div><div id="sevenStats" class="report"></div></div>
     <div class="card"><div class="period">最近 30 天</div><div id="thirtyStats" class="report"></div></div>
     <div class="card"><div class="period">累计</div><div id="overallStats" class="report"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>AI 30 天学习总结</h2>
+      <button id="generateSummary" class="primary">生成总结</button>
+    </div>
+    <div id="aiSummary" class="report small">按需生成，只使用聚合统计和高频错词；不会把完整历史答案全部发送给模型。</div>
+    <div id="aiSummaryMeta" class="meta"></div>
   </div>
 
   <div class="card">
@@ -260,6 +274,33 @@ async function loadDashboard(){
   renderReport(r);renderSessions(h.sessions||[]);renderVocabulary("vocabulary",v.items||[],false);renderVocabulary("dueVocabulary",d.items||[],true);
 }
 
+async function generateSummary(){
+  const button=document.getElementById("generateSummary");
+  const host=document.getElementById("aiSummary");
+  const meta=document.getElementById("aiSummaryMeta");
+  const provider=document.getElementById("llmProviderSelect").value||"auto";
+  button.disabled=true;button.textContent="生成中…";host.textContent="正在根据最近30天学习统计生成总结…";meta.textContent="";
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),90000);
+  try{
+    const r=await fetch("/api/report/narrative",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({learner_id:activeLearnerId,provider:provider}),
+      signal:controller.signal
+    });
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(d.error||"生成总结失败");
+    host.textContent=d.summary;
+    host.style.whiteSpace="pre-wrap";
+    meta.textContent=(d.model||"")+(d.service_tier?" · "+d.service_tier:"");
+  }catch(e){
+    host.textContent=e&&e.name==="AbortError"?"生成总结超过90秒仍未完成。":String(e.message||e);
+  }finally{
+    clearTimeout(timer);button.disabled=false;button.textContent="生成总结";
+  }
+}
+
 async function exportData(){
   try{
     const r=await fetch("/api/export?learner_id="+encodeURIComponent(activeLearnerId));
@@ -281,9 +322,16 @@ document.getElementById("learnerSelect").addEventListener("change",async functio
 });
 document.getElementById("addLearner").addEventListener("click",addLearner);
 document.getElementById("exportData").addEventListener("click",exportData);
+document.getElementById("generateSummary").addEventListener("click",generateSummary);
+document.getElementById("llmProviderSelect").addEventListener("change",function(){
+  localStorage.setItem("mediaDictationLlmProvider",this.value||"auto");
+});
 
 (async function(){
-  try{await loadLearners();await loadDashboard()}
+  try{
+    const provider=localStorage.getItem("mediaDictationLlmProvider")||"auto";
+    if(["auto","ollama","openai"].includes(provider))document.getElementById("llmProviderSelect").value=provider;
+    await loadLearners();await loadDashboard()}
   catch(e){document.getElementById("sessions").innerHTML='<div class="error">'+String(e.message||e)+"</div>"}
 })();
 </script>
