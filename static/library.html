@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>媒体库 · Media Dictation</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--line:#e5e7eb;--primary:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b42318}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:22px}.header{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+h1{margin:0;font-size:28px}.sub{color:var(--muted);margin-top:5px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:0 5px 18px rgba(0,0,0,.04)}
+select,button,a.button{border:1px solid #cbd5e1;border-radius:9px;padding:9px 12px;background:#fff;color:var(--text);font:inherit;text-decoration:none;cursor:pointer}a.primary,button.primary{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:700}
+.media{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center}.title{font-size:18px;font-weight:750}.meta,.status{color:var(--muted);font-size:13px;margin-top:5px;line-height:1.5}.actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:9px}.bar{height:100%;background:var(--primary)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.empty{text-align:center;color:var(--muted);padding:34px}
+@media(max-width:700px){.header{align-items:flex-start;flex-direction:column}.media{grid-template-columns:1fr}.actions{justify-content:flex-start}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1>媒体库</h1>
+      <div class="sub">管理本地音频/视频、转写状态和历史练习。</div>
+    </div>
+    <div class="toolbar">
+      <select id="learnerSelect"></select>
+      <a class="button" href="/assessment">水平评估</a>
+      <a class="button" href="/learning">学习中心</a>
+      <a class="button primary" href="/">返回听写</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="meta">
+      新上传请在听写首页进行。长音频会在后台 Whisper 转写；本页可刷新查看进度，
+      也可以对失败/中断任务重新转写。
+    </div>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+let activeLearnerId=Number(localStorage.getItem("mediaDictationLearnerId")||0);
+let pollTimer=null;
+
+function localDate(v){
+  if(!v)return "";
+  const d=new Date(String(v).replace(" ","T")+"Z");
+  return Number.isNaN(d.getTime())?v:d.toLocaleString();
+}
+function fmtBytes(n){
+  n=Number(n||0);
+  if(n<1024*1024)return (n/1024).toFixed(0)+" KB";
+  return (n/(1024*1024)).toFixed(1)+" MB";
+}
+function fmtDuration(sec){
+  sec=Math.max(0,Math.round(Number(sec||0)));
+  const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;
+  return (h?h+":":"")+(h?String(m).padStart(2,"0"):m)+":"+String(s).padStart(2,"0");
+}
+async function loadLearners(){
+  const r=await fetch("/api/learners"),d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||"无法读取学习者");
+  const select=document.getElementById("learnerSelect");
+  select.textContent="";
+  (d.learners||[]).forEach(x=>{
+    const o=document.createElement("option");o.value=x.id;o.textContent=x.name;select.appendChild(o);
+  });
+  if(!activeLearnerId)activeLearnerId=Number(d.default_learner_id||0);
+  select.value=String(activeLearnerId);
+}
+function statusText(item){
+  const job=item.latest_job||{};
+  if(item.transcription_status==="ready")return "转写完成";
+  if(job.status==="running"||job.status==="queued"){
+    return "Whisper "+String(job.progress||0)+"% · "+String(job.stage||job.status);
+  }
+  if(job.status==="failed")return "转写失败："+String(job.error||job.detail||"");
+  if(job.status==="interrupted")return "任务因服务器重启中断，可重新转写";
+  return item.transcription_status||"未转写";
+}
+async function retry(id){
+  const r=await fetch("/api/media/"+encodeURIComponent(id)+"/transcribe",{method:"POST"});
+  const d=await r.json();
+  if(!r.ok||!d.ok){alert(d.error||"无法重新转写");return}
+  await load();
+}
+async function renameMedia(item){
+  const title=prompt("新的标题",item.title||item.original_name||"");
+  if(!title)return;
+  const r=await fetch("/api/media/"+encodeURIComponent(item.id),{
+    method:"PATCH",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({title,learner_id:activeLearnerId})
+  });
+  const d=await r.json();if(!r.ok||!d.ok){alert(d.error||"重命名失败");return}
+  await load();
+}
+async function deleteMedia(item){
+  const hasSessions=Number(item.session_count||0)>0;
+  const message=hasSessions
+    ?"这个媒体有 "+item.session_count+" 个关联练习。删除将同时删除这些练习记录，确定吗？"
+    :"确定删除这个媒体文件吗？";
+  if(!confirm(message))return;
+  const q="?learner_id="+encodeURIComponent(activeLearnerId)+(hasSessions?"&delete_sessions=1":"");
+  const r=await fetch("/api/media/"+encodeURIComponent(item.id)+q,{method:"DELETE"});
+  const d=await r.json();if(!r.ok||!d.ok){alert(d.error||"删除失败");return}
+  await load();
+}
+function render(items){
+  const host=document.getElementById("list");host.textContent="";
+  if(!items||!items.length){host.innerHTML='<div class="card empty">还没有本地媒体。</div>';return}
+  items.forEach(item=>{
+    const card=document.createElement("div");card.className="card media";
+    const info=document.createElement("div");
+    const title=document.createElement("div");title.className="title";title.textContent=item.title||item.original_name||item.id;
+    const meta=document.createElement("div");meta.className="meta";
+    meta.textContent=fmtBytes(item.size_bytes)+" · "+fmtDuration(item.duration)+" · "+(item.language||"")+" · "+localDate(item.last_used_at);
+    const st=document.createElement("div");st.className="status "+(item.transcription_status==="ready"?"ok":"warn");st.textContent=statusText(item);
+    const prog=document.createElement("div");prog.className="progress";const bar=document.createElement("div");bar.className="bar";
+    const p=(item.latest_job&&(item.latest_job.status==="running"||item.latest_job.status==="queued"))?Number(item.latest_job.progress||0):Number(item.progress_percent||0);
+    bar.style.width=Math.max(0,Math.min(100,p))+"%";prog.appendChild(bar);
+    const stats=document.createElement("div");stats.className="meta";stats.textContent=(item.session_count||0)+" 次练习 · "+(item.completed_sentences||0)+" / "+(item.total_items||0)+" 句完成";
+    info.append(title,meta,st,prog,stats);
+
+    const actions=document.createElement("div");actions.className="actions";
+    if(item.transcription_status==="ready"){
+      const a=document.createElement("a");a.className="button primary";a.href="/?media="+encodeURIComponent(item.id);a.textContent="开始新练习";actions.appendChild(a);
+    }else{
+      const b=document.createElement("button");b.textContent="重新转写";b.onclick=()=>retry(item.id);actions.appendChild(b);
+    }
+    const rn=document.createElement("button");rn.textContent="重命名";rn.onclick=()=>renameMedia(item);
+    const del=document.createElement("button");del.textContent="删除";del.onclick=()=>deleteMedia(item);
+    actions.append(rn,del);
+    card.append(info,actions);host.appendChild(card);
+  });
+}
+async function load(){
+  const r=await fetch("/api/media?learner_id="+encodeURIComponent(activeLearnerId));
+  const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"媒体库读取失败");
+  render(d.items||[]);
+  const active=(d.items||[]).some(x=>x.latest_job&&["queued","running"].includes(x.latest_job.status));
+  if(pollTimer){clearTimeout(pollTimer);pollTimer=null}
+  if(active)pollTimer=setTimeout(()=>load().catch(e=>alert(String(e.message||e))),1500);
+}
+document.getElementById("learnerSelect").addEventListener("change",async function(){
+  activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));await load();
+});
+(async function(){try{await loadLearners();await load()}catch(e){document.getElementById("list").innerHTML='<div class="card bad">'+String(e.message||e)+"</div>"}})();
+</script>
+</body>
+</html>
