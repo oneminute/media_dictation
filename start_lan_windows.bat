@@ -13,14 +13,16 @@ echo ============================================================
 echo Media Dictation - LAN Production Server
 echo ============================================================
 echo.
-echo Installing/checking required packages...
-%PY% -m pip install -U -r requirements.txt
+echo Checking production dependencies...
+%PY% -c "import flask, waitress, openai, dotenv, youtube_transcript_api" >nul 2>nul
 if errorlevel 1 (
   echo.
-  echo Failed to install Python dependencies.
+  echo Dependencies are missing. Run setup_windows.bat first.
   pause
   exit /b 1
 )
+
+if exist "backup_data_windows.bat" call "backup_data_windows.bat" /quiet
 
 echo.
 echo Checking local Ollama...
