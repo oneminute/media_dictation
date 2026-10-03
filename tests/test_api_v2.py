@@ -8,6 +8,7 @@ _tmp = tempfile.TemporaryDirectory()
 os.environ["MEDIA_DICTATION_DB"] = str(Path(_tmp.name) / "api_test.db")
 
 import app
+import llm_service
 import storage
 
 
@@ -23,7 +24,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data["ok"])
-        self.assertGreaterEqual(data["schema_version"], 4)
+        self.assertGreaterEqual(data["schema_version"], 5)
         self.assertIn(data["llm_provider"], {"auto", "ollama", "openai"})
 
     def test_create_learner_session_snapshot_and_resume(self):
@@ -67,25 +68,25 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(detail["video_title"], "API Video")
 
     def test_auto_router_falls_back_to_openai(self):
-        with patch.object(app, "llm_provider", return_value="auto"), patch.object(
-            app,
+        with patch.object(llm_service, "llm_provider", return_value="auto"), patch.object(
+            llm_service,
             "translate_to_chinese_ollama",
             side_effect=RuntimeError("local unavailable"),
         ), patch.object(
-            app,
+            llm_service,
             "translate_to_chinese_openai",
             return_value=("云端结果", "gpt-test", "flex"),
         ):
-            result = app.translate_to_chinese("hello")
+            result = llm_service.translate_to_chinese("hello")
         self.assertEqual(result, ("云端结果", "gpt-test", "flex"))
 
     def test_ollama_only_never_calls_openai(self):
-        with patch.object(app, "llm_provider", return_value="ollama"), patch.object(
-            app,
+        with patch.object(llm_service, "llm_provider", return_value="ollama"), patch.object(
+            llm_service,
             "translate_to_chinese_ollama",
             return_value=("本地结果", "ollama:test", "local"),
-        ), patch.object(app, "translate_to_chinese_openai") as cloud:
-            result = app.translate_to_chinese("hello")
+        ), patch.object(llm_service, "translate_to_chinese_openai") as cloud:
+            result = llm_service.translate_to_chinese("hello")
         self.assertEqual(result[0], "本地结果")
         cloud.assert_not_called()
 
