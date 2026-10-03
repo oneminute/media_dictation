@@ -114,12 +114,43 @@ class RemainingFeatureTests(unittest.TestCase):
             answer_before="hello world",
             event_type="correct",
         )
-        storage.add_vocabulary_word(
+        vocab_entry = storage.add_vocabulary_word(
             normalized_word="world",
             display_word="world",
             translation="世界",
             context_sentence="Hello, world!",
             learner_id=learner["id"],
+        )
+        storage.review_vocabulary(vocab_entry["id"], "good")
+
+        run_id = "roundtrip-assessment"
+        storage.start_assessment_run(
+            run_id,
+            learner["id"],
+            assessment_service.ASSESSMENT_VERSION,
+            12,
+        )
+        first_item = assessment_service.assessment_items()[0]
+        first_score = assessment_service.score_answer(
+            first_item["id"],
+            first_item["tts_text"],
+            0,
+        )
+        storage.record_assessment_response(
+            run_id=run_id,
+            item_id=first_score["item_id"],
+            level=first_score["level"],
+            expected_text=first_score["expected_text"],
+            answer_text=first_score["expected_text"],
+            token_accuracy=first_score["token_accuracy"],
+            exact_correct=True,
+            replays=0,
+        )
+        storage.finish_assessment_run(
+            run_id,
+            score=100.0,
+            estimated_level="A2",
+            confidence="low",
         )
 
         exported = storage.export_learner_data(learner["id"])
@@ -134,10 +165,16 @@ class RemainingFeatureTests(unittest.TestCase):
             ],
             "Round Trip Video",
         )
+        imported_vocab = storage.get_vocabulary(learner_id=imported_id)[0]
+        self.assertEqual(imported_vocab["translation"], "世界")
+        self.assertEqual(imported_vocab["review_count"], 1)
+        self.assertTrue(imported_vocab["fsrs_card_json"])
         self.assertEqual(
-            storage.get_vocabulary(learner_id=imported_id)[0]["translation"],
-            "世界",
+            len(storage.list_assessment_runs(imported_id)),
+            1,
         )
+        self.assertEqual(imported["imported_vocabulary_reviews"], 1)
+        self.assertEqual(imported["imported_assessments"], 1)
 
     def test_assessment_storage_and_summary(self):
         learner = storage.create_learner("Assessment")
