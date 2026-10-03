@@ -2393,6 +2393,355 @@ def latest_transcription_job(media_id: str) -> dict[str, Any] | None:
     return get_transcription_job(row["id"]) if row is not None else None
 
 
+
+def start_assessment_run(
+    run_id: str,
+    learner_id: int | None,
+    assessment_version: str,
+    total_items: int,
+) -> dict[str, Any]:
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO assessment_runs (
+                id, learner_id, assessment_version, total_items
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (str(run_id), learner_id, str(assessment_version), int(total_items)),
+        )
+    return {"id": str(run_id), "learner_id": learner_id}
+
+
+def record_assessment_response(
+    *,
+    run_id: str,
+    item_id: str,
+    level: str,
+    expected_text: str,
+    answer_text: str,
+    token_accuracy: float,
+    exact_correct: bool,
+    replays: int,
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO assessment_responses (
+                run_id, item_id, level, expected_text, answer_text,
+                token_accuracy, exact_correct, replays
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, item_id) DO UPDATE SET
+                answer_text = excluded.answer_text,
+                token_accuracy = excluded.token_accuracy,
+                exact_correct = excluded.exact_correct,
+                replays = excluded.replays
+            """,
+            (
+                str(run_id),
+                str(item_id),
+                str(level),
+                expected_text,
+                answer_text,
+                float(token_accuracy),
+                1 if exact_correct else 0,
+                max(0, int(replays)),
+            ),
+        )
+
+
+def finish_assessment_run(
+    run_id: str,
+    *,
+    score: float,
+    estimated_level: str,
+    confidence: str,
+) -> dict[str, Any]:
+    with connect() as conn:
+        summary = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS answered,
+                SUM(exact_correct) AS correct,
+                SUM(replays) AS replays
+            FROM assessment_responses
+            WHERE run_id = ?
+            """,
+            (str(run_id),),
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE assessment_runs
+            SET completed_at = CURRENT_TIMESTAMP,
+                correct_items = ?,
+                total_replays = ?,
+                score = ?,
+                estimated_level = ?,
+                confidence = ?
+            WHERE id = ?
+            """,
+            (
+                int(summary["correct"] or 0),
+                int(summary["replays"] or 0),
+                float(score),
+                str(estimated_level),
+                str(confidence),
+                str(run_id),
+            ),
+        )
+    return get_assessment_run(str(run_id)) or {}
+
+
+def get_assessment_run(run_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM assessment_runs WHERE id = ?",
+            (str(run_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        responses = conn.execute(
+            """
+            SELECT
+                item_id, level, token_accuracy, exact_correct, replays, created_at
+            FROM assessment_responses
+            WHERE run_id = ?
+            ORDER BY id
+            """,
+            (str(run_id),),
+        ).fetchall()
+    data = dict(row)
+    data["responses"] = [
+        {**dict(item), "exact_correct": bool(item["exact_correct"])}
+        for item in responses
+    ]
+    return data
+
+
+def list_assessment_runs(
+    learner_id: int | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM assessment_runs
+            WHERE learner_id = ? AND completed_at IS NOT NULL
+            ORDER BY completed_at DESC
+            LIMIT ?
+            """,
+            (learner_id, max(1, min(int(limit), 100))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def import_learner_data(
+    payload: dict[str, Any],
+    *,
+    learner_name: str | None = None,
+) -> dict[str, Any]:
+    """Import export_version=1 into a new learner profile."""
+    if not isinstance(payload, dict):
+        raise ValueError("Import payload must be a JSON object.")
+    if int(payload.get("export_version", 0) or 0) != 1:
+        raise ValueError("Only export_version 1 is supported.")
+
+    source_learner = payload.get("learner") or {}
+    base_name = " ".join(
+        str(learner_name or source_learner.get("name") or "Imported")
+        .strip()
+        .split()
+    ) or "Imported"
+
+    existing = {x["name"] for x in list_learners()}
+    candidate = base_name
+    counter = 2
+    while candidate in existing:
+        candidate = f"{base_name} ({counter})"
+        counter += 1
+    learner = create_learner(candidate)
+    learner_id = learner["id"]
+
+    sessions = payload.get("sessions") or []
+    items = payload.get("practice_items") or []
+    attempts = payload.get("attempts") or []
+    events = payload.get("practice_events") or []
+    reviews = payload.get("sentence_reviews") or []
+    vocab = payload.get("vocabulary") or []
+
+    collections = [sessions, items, attempts, events, reviews, vocab]
+    if not all(isinstance(x, list) for x in collections):
+        raise ValueError("Import arrays are malformed.")
+
+    items_by_session: dict[int, list[dict[str, Any]]] = {}
+    for item in items:
+        old_id = int(item.get("session_id"))
+        items_by_session.setdefault(old_id, []).append(item)
+    for group in items_by_session.values():
+        group.sort(key=lambda x: int(x.get("sentence_index", 0)))
+
+    id_map: dict[int, int] = {}
+    for raw_session in sessions:
+        old_id = int(raw_session.get("id"))
+        snapshot = [
+            {
+                "text": str(x.get("text", "")),
+                "start": float(x.get("start", 0) or 0),
+                "end": float(x.get("end", 0) or 0),
+                "duration": float(x.get("duration", 0) or 0),
+            }
+            for x in items_by_session.get(old_id, [])
+        ]
+        new_id = create_session(
+            video_id=str(raw_session.get("video_id", "")),
+            source_url=str(raw_session.get("source_url", "")),
+            language=str(raw_session.get("language", "")),
+            is_generated=bool(raw_session.get("is_generated", False)),
+            total_items=int(
+                raw_session.get("total_items", len(snapshot)) or len(snapshot)
+            ),
+            learner_id=learner_id,
+            video_title=str(raw_session.get("video_title", "")),
+            items=snapshot,
+            segmentation_version=str(
+                raw_session.get("segmentation_version", "imported")
+            ),
+            source_type=str(raw_session.get("source_type", "youtube")),
+            media_id=None,
+        )
+        id_map[old_id] = new_id
+
+    with connect() as conn:
+        for a in attempts:
+            old_sid = int(a.get("session_id"))
+            if old_sid not in id_map:
+                continue
+            conn.execute(
+                """
+                INSERT INTO attempts (
+                    session_id, sentence_index, sentence_text, answer_before,
+                    event_type, wrong_word, correct_word, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                """,
+                (
+                    id_map[old_sid],
+                    int(a.get("sentence_index", 0)),
+                    str(a.get("sentence_text", "")),
+                    str(a.get("answer_before", "")),
+                    str(a.get("event_type", "")),
+                    a.get("wrong_word"),
+                    a.get("correct_word"),
+                    a.get("created_at"),
+                ),
+            )
+
+        for e in events:
+            old_sid = int(e.get("session_id"))
+            if old_sid not in id_map:
+                continue
+            conn.execute(
+                """
+                INSERT INTO practice_events (
+                    session_id, sentence_index, event_type,
+                    value_ms, detail, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                """,
+                (
+                    id_map[old_sid],
+                    e.get("sentence_index"),
+                    str(e.get("event_type", "")),
+                    int(e.get("value_ms", 0) or 0),
+                    str(e.get("detail", "")),
+                    e.get("created_at"),
+                ),
+            )
+
+        for r in reviews:
+            old_sid = int(r.get("original_session_id"))
+            if old_sid not in id_map:
+                continue
+            conn.execute(
+                """
+                INSERT INTO sentence_reviews (
+                    learner_id, original_session_id, sentence_index,
+                    sentence_text, answer_before, is_correct, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                """,
+                (
+                    learner_id,
+                    id_map[old_sid],
+                    int(r.get("sentence_index", 0)),
+                    str(r.get("sentence_text", "")),
+                    str(r.get("answer_before", "")),
+                    1 if r.get("is_correct") else 0,
+                    r.get("created_at"),
+                ),
+            )
+
+    for v in vocab:
+        normalized = str(v.get("normalized_word", "")).strip()
+        display = str(v.get("word", "")).strip()
+        meaning = str(v.get("translation", "")).strip()
+        if not normalized or not display or not meaning:
+            continue
+        occurrences = v.get("occurrences") or []
+        if not occurrences:
+            occurrences = [
+                {"context_sentence": str(v.get("context_sentence", ""))}
+            ]
+        for occurrence in occurrences:
+            add_vocabulary_word(
+                normalized_word=normalized,
+                display_word=display,
+                translation=meaning,
+                context_sentence=str(occurrence.get("context_sentence", "")),
+                video_id=occurrence.get("video_id"),
+                source_url=occurrence.get("source_url"),
+                learner_id=learner_id,
+            )
+
+    with connect() as conn:
+        for new_id in id_map.values():
+            conn.execute(
+                """
+                UPDATE practice_sessions
+                SET completed_sentences = (
+                        SELECT COUNT(DISTINCT sentence_index)
+                        FROM attempts
+                        WHERE session_id = ? AND event_type = 'correct'
+                    ),
+                    last_sentence_index = COALESCE(
+                        (
+                            SELECT MAX(sentence_index)
+                            FROM attempts
+                            WHERE session_id = ?
+                        ),
+                        0
+                    ),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_id, new_id, new_id),
+            )
+
+    return {
+        "learner": learner,
+        "imported_sessions": len(id_map),
+        "imported_vocabulary": len(vocab),
+        "warning": (
+            "JSON restores learning data only. Local audio/video binaries "
+            "must be restored from a full backup separately."
+        ),
+    }
+
+
 def get_stats() -> dict[str, Any]:
     with connect() as conn:
         summary = conn.execute(
