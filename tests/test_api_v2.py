@@ -102,7 +102,7 @@ class ApiTests(unittest.TestCase):
         )
 
     def test_auto_router_falls_back_to_openai(self):
-        with patch.object(llm_service, "llm_provider", return_value="auto"), patch.object(
+        with patch.object(
             llm_service,
             "translate_to_chinese_ollama",
             side_effect=RuntimeError("local unavailable"),
@@ -111,16 +111,22 @@ class ApiTests(unittest.TestCase):
             "translate_to_chinese_openai",
             return_value=("云端结果", "gpt-test", "flex"),
         ):
-            result = llm_service.translate_to_chinese("hello")
+            result = llm_service.translate_to_chinese(
+                "hello",
+                provider_override="auto",
+            )
         self.assertEqual(result, ("云端结果", "gpt-test", "flex"))
 
     def test_ollama_only_never_calls_openai(self):
-        with patch.object(llm_service, "llm_provider", return_value="ollama"), patch.object(
+        with patch.object(
             llm_service,
             "translate_to_chinese_ollama",
             return_value=("本地结果", "ollama:test", "local"),
         ), patch.object(llm_service, "translate_to_chinese_openai") as cloud:
-            result = llm_service.translate_to_chinese("hello")
+            result = llm_service.translate_to_chinese(
+                "hello",
+                provider_override="ollama",
+            )
         self.assertEqual(result[0], "本地结果")
         cloud.assert_not_called()
 
