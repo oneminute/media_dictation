@@ -28,6 +28,7 @@ from llm_service import (
     result_identity,
     translate_to_chinese,
     translate_word_in_context,
+    unload_configured_ollama_models,
 )
 from transcript_service import (
     SEGMENTATION_VERSION,
@@ -139,6 +140,14 @@ def transcribe_local_media():
     saved = None
     try:
         saved = persist_uploaded_media(file_storage)
+
+        release_ollama = os.getenv(
+            "WHISPER_RELEASE_OLLAMA",
+            "true",
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if release_ollama and ollama_available():
+            unload_configured_ollama_models()
+
         result = transcribe_media(saved["path"])
 
         source = save_media_source(
@@ -197,6 +206,10 @@ def health():
             "whisper_available": whisper_available(),
             "whisper_model": os.getenv("WHISPER_MODEL", "small.en"),
             "whisper_device": os.getenv("WHISPER_DEVICE", "auto"),
+            "whisper_release_ollama": os.getenv(
+                "WHISPER_RELEASE_OLLAMA",
+                "true",
+            ).strip().lower() in {"1", "true", "yes", "on"},
             "media_max_upload_mb": max_upload_bytes() // (1024 * 1024),
             "llm_provider": provider,
             "translation_enabled": (
