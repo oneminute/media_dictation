@@ -20,6 +20,7 @@ from llm_service import (
     SENTENCE_PROMPT_VERSION,
     WORD_PROMPT_VERSION,
     cache_candidates,
+    generate_learning_summary,
     llm_provider,
     normalize_lookup_word,
     ollama_available,
@@ -534,6 +535,38 @@ def review_sentence_attempt():
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"ok": False, "error": f"保存错句复习记录失败：{exc}"}), 400
+
+
+@app.post("/api/report/narrative")
+def narrative_report():
+    payload = request.get_json(silent=True) or {}
+    learner_id = payload.get("learner_id")
+    report_data = get_learning_report(learner_id=learner_id)
+
+    compact = {
+        "today": report_data.get("today"),
+        "seven_days": report_data.get("seven_days"),
+        "thirty_days": report_data.get("thirty_days"),
+        "assessment": report_data.get("assessment"),
+        "top_errors": report_data.get("top_errors"),
+        "sentence_review": report_data.get("sentence_review"),
+    }
+
+    try:
+        summary, model, service_tier = generate_learning_summary(
+            compact,
+            provider_override=payload.get("provider"),
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "summary": summary,
+                "model": model,
+                "service_tier": service_tier,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"生成学习总结失败：{exc}"}), 500
 
 
 @app.get("/api/review-sentences")
