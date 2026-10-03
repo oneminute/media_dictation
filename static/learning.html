@@ -48,7 +48,11 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
       </select>
       <button id="addLearner">+ 学习者</button>
       <button id="exportData">导出数据</button>
+      <button id="importData">导入数据</button>
+      <input id="importFile" type="file" accept=".json,application/json" hidden>
       <a class="button" href="/review">错句复习</a>
+      <a class="button" href="/library">媒体库</a>
+      <a class="button" href="/assessment">水平评估</a>
       <a class="button" href="/">返回听写</a>
       <a class="button" href="/logout">退出</a>
     </div>
@@ -316,12 +320,46 @@ async function exportData(){
   }catch(e){alert(String(e.message||e))}
 }
 
+async function importData(file){
+  if(!file)return;
+  try{
+    const text=await file.text();
+    const parsed=JSON.parse(text);
+    const r=await fetch("/api/import",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({data:parsed})
+    });
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(d.error||"导入失败");
+    alert(
+      "导入完成：学习者 " + d.learner.name +
+      "，" + d.imported_sessions + " 个练习，" +
+      d.imported_vocabulary + " 个生词条目。"
+    );
+    await loadLearners(d.learner.id);
+    activeLearnerId=Number(d.learner.id);
+    localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));
+    await loadDashboard();
+  }catch(e){
+    alert(String(e.message||e));
+  }finally{
+    document.getElementById("importFile").value="";
+  }
+}
+
 document.getElementById("learnerSelect").addEventListener("change",async function(){
   activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));
   try{await loadDashboard()}catch(e){alert(String(e.message||e))}
 });
 document.getElementById("addLearner").addEventListener("click",addLearner);
 document.getElementById("exportData").addEventListener("click",exportData);
+document.getElementById("importData").addEventListener("click",function(){
+  document.getElementById("importFile").click();
+});
+document.getElementById("importFile").addEventListener("change",function(){
+  void importData(this.files&&this.files[0]);
+});
 document.getElementById("generateSummary").addEventListener("click",generateSummary);
 document.getElementById("llmProviderSelect").addEventListener("change",function(){
   localStorage.setItem("mediaDictationLlmProvider",this.value||"auto");
