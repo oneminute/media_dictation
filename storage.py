@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 DEFAULT_LEARNER_NAME = "Default"
 
 
@@ -346,6 +346,24 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_assessment_runs_learner
                 ON assessment_runs(learner_id, started_at DESC);
+
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                learner_id INTEGER,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                client_ip TEXT NOT NULL DEFAULT '',
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(learner_id)
+                    REFERENCES learners(id)
+                    ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_created
+                ON audit_events(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_events_action
+                ON audit_events(action, created_at DESC);
             """
         )
 
@@ -2742,6 +2760,84 @@ def import_learner_data(
             "must be restored from a full backup separately."
         ),
     }
+
+
+
+def record_audit_event(
+    action: str,
+    *,
+    status: str = "ok",
+    client_ip: str = "",
+    detail: str = "",
+    learner_id: int | None = None,
+) -> None:
+    safe_action = str(action or "").strip()[:100]
+    if not safe_action:
+        raise ValueError("Audit action is required.")
+
+    normalized_learner = None
+    if learner_id is not None:
+        try:
+            normalized_learner = int(learner_id)
+        except (TypeError, ValueError):
+            normalized_learner = None
+
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO audit_events (
+                learner_id, action, status, client_ip, detail
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_learner,
+                safe_action,
+                str(status or "ok")[:40],
+                str(client_ip or "")[:80],
+                str(detail or "")[:500],
+            ),
+        )
+
+
+def list_audit_events(limit: int = 100) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 500))
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                ae.id,
+                ae.learner_id,
+                l.name AS learner_name,
+                ae.action,
+                ae.status,
+                ae.client_ip,
+                ae.detail,
+                ae.created_at
+            FROM audit_events ae
+            LEFT JOIN learners l ON l.id = ae.learner_id
+            ORDER BY ae.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "learner_id": (
+                int(row["learner_id"])
+                if row["learner_id"] is not None
+                else None
+            ),
+            "learner_name": row["learner_name"] or "",
+            "action": row["action"],
+            "status": row["status"],
+            "client_ip": row["client_ip"],
+            "detail": row["detail"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
 
 
 def get_stats() -> dict[str, Any]:
