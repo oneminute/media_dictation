@@ -26,7 +26,17 @@ if exist "backup_data_windows.bat" call "backup_data_windows.bat" /quiet
 
 echo.
 echo Checking local Ollama...
-powershell -NoProfile -Command "try { $r = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2; Write-Host '  Ollama: AVAILABLE at http://127.0.0.1:11434' -ForegroundColor Green } catch { Write-Host '  Ollama: NOT AVAILABLE - auto mode will use OpenAI fallback if configured.' -ForegroundColor Yellow }"
+if not defined OLLAMA_HOST set "OLLAMA_HOST=127.0.0.1:12000"
+powershell -NoProfile -Command ^
+  "$base='http://' + $env:OLLAMA_HOST; " ^
+  "$ready={ try { Invoke-RestMethod -Uri ($base + '/api/tags') -TimeoutSec 2 ^| Out-Null; $true } catch { $false } }; " ^
+  "if (^& $ready) { Write-Host ('  Ollama: AVAILABLE at ' + $base) -ForegroundColor Green; exit 0 }; " ^
+  "$cmd=Get-Command ollama.exe -ErrorAction SilentlyContinue; " ^
+  "if (-not $cmd) { Write-Host '  Ollama executable was not found in PATH.' -ForegroundColor Red; exit 1 }; " ^
+  "Write-Host ('  Ollama is not running. Starting it at ' + $base + ' ...') -ForegroundColor Yellow; " ^
+  "Start-Process -FilePath $cmd.Source -ArgumentList 'serve' -WindowStyle Hidden; " ^
+  "for ($i=0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 500; if (^& $ready) { Write-Host ('  Ollama: STARTED at ' + $base) -ForegroundColor Green; exit 0 } }; " ^
+  "Write-Host ('  Ollama did not become ready at ' + $base + '. OpenAI fallback will be used if configured.') -ForegroundColor Red; exit 1"
 
 echo.
 echo Server port: 8765
