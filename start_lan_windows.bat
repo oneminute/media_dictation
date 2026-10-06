@@ -29,13 +29,13 @@ echo Checking local Ollama...
 if not defined OLLAMA_HOST set "OLLAMA_HOST=127.0.0.1:12000"
 powershell -NoProfile -Command ^
   "$base='http://' + $env:OLLAMA_HOST; " ^
-  "$ready={ try { Invoke-RestMethod -Uri ($base + '/api/tags') -TimeoutSec 2 ^| Out-Null; $true } catch { $false } }; " ^
-  "if (^& $ready) { Write-Host ('  Ollama: AVAILABLE at ' + $base) -ForegroundColor Green; exit 0 }; " ^
+  "$ready={ try { Invoke-RestMethod -Uri ($base + '/api/tags') -TimeoutSec 2 | Out-Null; $true } catch { $false } }; " ^
+  "if (& $ready) { Write-Host ('  Ollama: AVAILABLE at ' + $base) -ForegroundColor Green; exit 0 }; " ^
   "$cmd=Get-Command ollama.exe -ErrorAction SilentlyContinue; " ^
   "if (-not $cmd) { Write-Host '  Ollama executable was not found in PATH.' -ForegroundColor Red; exit 1 }; " ^
   "Write-Host ('  Ollama is not running. Starting it at ' + $base + ' ...') -ForegroundColor Yellow; " ^
   "Start-Process -FilePath $cmd.Source -ArgumentList 'serve' -WindowStyle Hidden; " ^
-  "for ($i=0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 500; if (^& $ready) { Write-Host ('  Ollama: STARTED at ' + $base) -ForegroundColor Green; exit 0 } }; " ^
+  "for ($i=0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 500; if (& $ready) { Write-Host ('  Ollama: STARTED at ' + $base) -ForegroundColor Green; exit 0 } }; " ^
   "Write-Host ('  Ollama did not become ready at ' + $base + '. OpenAI fallback will be used if configured.') -ForegroundColor Red; exit 1"
 
 echo.
@@ -45,7 +45,7 @@ echo Open on THIS computer:
 echo   http://127.0.0.1:8765
 echo.
 echo Open on another computer on the SAME Wi-Fi/LAN:
-powershell -NoProfile -Command "$configs = Get-NetIPConfiguration ^| Where-Object { $_.IPv4DefaultGateway -ne $null -and $_.IPv4Address -ne $null }; if (-not $configs) { Write-Host '  Could not detect a LAN IPv4 address. Run ipconfig and use your IPv4 Address.' } else { $configs ^| ForEach-Object { $_.IPv4Address.IPAddress } ^| Sort-Object -Unique ^| ForEach-Object { Write-Host ('  http://' + $_ + ':8765') } }"
+powershell -NoProfile -Command "$configs = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null -and $_.IPv4Address -ne $null }; if (-not $configs) { Write-Host '  Could not detect a LAN IPv4 address. Run ipconfig and use your IPv4 Address.' } else { $configs | ForEach-Object { $_.IPv4Address.IPAddress } | Sort-Object -Unique | ForEach-Object { Write-Host ('  http://' + $_ + ':8765') } }"
 echo.
 echo IMPORTANT:
 echo   - Both computers must be on the same local network.
