@@ -18,6 +18,15 @@ if errorlevel 1 (
 )
 
 echo.
+if not defined OLLAMA_HOST set "OLLAMA_HOST=127.0.0.1:12000"
+set "OLLAMA_BASE_URL=http://%OLLAMA_HOST%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ensure_ollama_windows.ps1"
+if errorlevel 1 (
+  echo.
+  echo Local Ollama is unavailable. OpenAI fallback can still be used when configured.
+)
+
+echo.
 echo Starting Media Dictation at http://127.0.0.1:8765
 start "" http://127.0.0.1:8765
 %PY% app.py
