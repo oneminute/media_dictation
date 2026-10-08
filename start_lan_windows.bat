@@ -25,18 +25,12 @@ if errorlevel 1 (
 if exist "backup_data_windows.bat" call "backup_data_windows.bat" /quiet
 
 echo.
-echo Checking local Ollama...
 if not defined OLLAMA_HOST set "OLLAMA_HOST=127.0.0.1:12000"
-powershell -NoProfile -Command ^
-  "$base='http://' + $env:OLLAMA_HOST; " ^
-  "function Test-Ollama { try { $null=Invoke-RestMethod -Uri ($base + '/api/tags') -TimeoutSec 2; return $true } catch { return $false } }; " ^
-  "if (Test-Ollama) { Write-Host ('  Ollama: AVAILABLE at ' + $base) -ForegroundColor Green; exit 0 }; " ^
-  "$cmd=Get-Command ollama.exe -ErrorAction SilentlyContinue; " ^
-  "if (-not $cmd) { Write-Host '  Ollama executable was not found in PATH.' -ForegroundColor Red; exit 1 }; " ^
-  "Write-Host ('  Ollama is not running. Starting it at ' + $base + ' ...') -ForegroundColor Yellow; " ^
-  "Start-Process -FilePath $cmd.Source -ArgumentList 'serve' -WindowStyle Hidden; " ^
-  "for ($i=0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 500; if (Test-Ollama) { Write-Host ('  Ollama: STARTED at ' + $base) -ForegroundColor Green; exit 0 } }; " ^
-  "Write-Host ('  Ollama did not become ready at ' + $base + '. OpenAI fallback will be used if configured.') -ForegroundColor Red; exit 1"
+set "OLLAMA_BASE_URL=http://%OLLAMA_HOST%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ensure_ollama_windows.ps1"
+if errorlevel 1 (
+  echo   OpenAI fallback can still be used when configured.
+)
 
 echo.
 echo Server port: 8765
