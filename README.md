@@ -52,7 +52,7 @@ LLM_PROVIDER=auto
 Recommended local model:
 
 ```env
-OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_BASE_URL=http://127.0.0.1:12000
 OLLAMA_TRANSLATION_MODEL=hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
 OLLAMA_WORD_MODEL=hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
 ```
@@ -72,7 +72,7 @@ OLLAMA_AUTO_WORD_TIMEOUT_SECONDS=7
 ```
 
 Ollama does not need to be exposed to the LAN. Media Dictation calls
-`127.0.0.1:11434` on the server PC.
+`127.0.0.1:12000` on the server PC.
 
 ### Local media + background Whisper
 
@@ -282,6 +282,10 @@ Normal local start:
 start_windows.bat
 ```
 
+On Windows, both local and LAN launchers default Ollama to `127.0.0.1:12000`
+and automatically start `ollama serve` when needed. Ollama remains bound to
+loopback only.
+
 LAN production start:
 
 ```
@@ -292,7 +296,7 @@ The production launcher:
 
 - checks dependencies without changing installed versions;
 - backs up SQLite;
-- checks whether local Ollama is reachable;
+- checks whether local Ollama is reachable and starts it automatically when needed;
 - starts Waitress on `0.0.0.0:8765`;
 - prints LAN addresses.
 
@@ -353,7 +357,7 @@ A typical local-first configuration is:
 ```env
 LLM_PROVIDER=auto
 
-OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_BASE_URL=http://127.0.0.1:12000
 OLLAMA_TRANSLATION_MODEL=hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL
 OLLAMA_TRANSLATION_TIMEOUT_SECONDS=60
 OLLAMA_AUTO_TRANSLATION_TIMEOUT_SECONDS=12
