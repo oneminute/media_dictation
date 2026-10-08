@@ -35,7 +35,7 @@ def llm_provider() -> str:
 
 def ollama_base_url() -> str:
     return (
-        os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:12000")
         .strip()
         .rstrip("/")
     )
