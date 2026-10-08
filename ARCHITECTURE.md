@@ -31,7 +31,7 @@ SQLite  |      YouTube
    LLM router
     /      \
 Ollama   OpenAI
-:11434   Responses API
+:12000   Responses API
 ```
 
 The browser never talks directly to Ollama or OpenAI.
