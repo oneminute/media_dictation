@@ -308,6 +308,7 @@ button.warn{background:#fef3c7;color:#92400e}
     每次只修正第一个错误词/漏词/多余词，其余输入保持不变；整句正确后停在当前句；
     <span class="kbd">Ctrl</span> + <span class="kbd">H</span>：显示/隐藏原文；
     <span class="kbd">Alt</span> + <span class="kbd">T</span>：显示/隐藏当前句中文翻译；
+    <span class="kbd">Alt</span> + <span class="kbd">S</span>：分析已完成的当前句；
     <span class="kbd">Alt</span> + <span class="kbd">A</span>：把当前查到的单词加入生词本；
     <span class="kbd">Esc</span>：收起单词卡和翻译；
     <span class="kbd">Tab</span> / <span class="kbd">Shift</span> + <span class="kbd">Tab</span>：下一句/上一句。
@@ -1582,6 +1583,16 @@ window.addEventListener(
         event.preventDefault();
         event.stopPropagation();
         toggleTranslationShortcut();
+        return;
+      }
+
+      if (altKey === "s") {
+        const analysisButton = document.getElementById("analyzeSentence");
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat && !analysisButton.disabled) {
+          void analyzeCurrentSentence();
+        }
         return;
       }
 
