@@ -16,6 +16,73 @@ from openai import (
     RateLimitError,
 )
 
+
+ANALYSIS_PROMPT_VERSION = "sentence-analysis-v1"
+ANALYSIS_SYSTEM_PROMPT = (
+    "You are an English tutor for a Chinese B1-B2 learner. Analyze only the supplied "
+    "English sentence. Return concise Simplified Chinese with these exact headings: "
+    "【句意】natural meaning; 【句子结构】subject, predicate, clauses and grammar; "
+    "【易混词义】up to 3 context-dependent ambiguous words or phrases, explain the "
+    "actual meaning versus a plausible wrong meaning, or say 无明显歧义; "
+    "【表达要点】one useful collocation or natural usage. "
+    "Do not invent ambiguity or context. No markdown tables. Keep under 350 Chinese characters."
+)
+
+
+def analyze_english_sentence(
+    text: str, provider_override: str | None = None,
+) -> tuple[str, str, str]:
+    provider = normalize_provider(provider_override)
+
+    def local(timeout: float) -> tuple[str, str, str]:
+        model = ollama_model("OLLAMA_TRANSLATION_MODEL")
+        result = ollama_chat(
+            model=model,
+            system_prompt=ANALYSIS_SYSTEM_PROMPT,
+            user_prompt=text,
+            timeout=timeout,
+        )
+        return result, f"ollama:{model}", "local"
+
+    def cloud() -> tuple[str, str, str]:
+        key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError("未配置 OPENAI_API_KEY。")
+        model = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
+        tier = openai_service_tier("OPENAI_TRANSLATION_SERVICE_TIER", "flex")
+        client = OpenAI(
+            api_key=key,
+            timeout=openai_timeout_seconds("OPENAI_TRANSLATION_TIMEOUT_SECONDS", 45.0),
+            max_retries=0,
+        )
+        response = client.responses.create(
+            model=model,
+            instructions=ANALYSIS_SYSTEM_PROMPT,
+            input=text,
+            max_output_tokens=700,
+            service_tier=tier,
+            **reasoning_kwargs(model),
+        )
+        result = (response.output_text or "").strip()
+        if not result:
+            raise RuntimeError("模型返回空句子分析。")
+        return result, model, getattr(response, "service_tier", None) or tier
+
+    if provider == "ollama":
+        return local(ollama_timeout_seconds("OLLAMA_TRANSLATION_TIMEOUT_SECONDS", 60.0))
+    if provider == "openai":
+        return cloud()
+    try:
+        return local(ollama_timeout_seconds("OLLAMA_AUTO_TRANSLATION_TIMEOUT_SECONDS", 12.0))
+    except Exception as local_exc:
+        try:
+            return cloud()
+        except Exception as cloud_exc:
+            raise RuntimeError(
+                f"本地 Ollama 失败：{local_exc}；OpenAI fallback 也失败：{cloud_exc}"
+            ) from cloud_exc
+
+
 SENTENCE_PROMPT_VERSION = "sentence-v2"
 WORD_PROMPT_VERSION = "word-v2"
 
