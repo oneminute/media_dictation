@@ -305,6 +305,9 @@ button.warn{background:#fef3c7;color:#92400e}
     <span class="kbd">Enter</span>：检查答案；
     每次只修正第一个错误词/漏词/多余词，其余输入保持不变；整句正确后停在当前句；
     <span class="kbd">Ctrl</span> + <span class="kbd">H</span>：显示/隐藏原文；
+    <span class="kbd">Alt</span> + <span class="kbd">T</span>：显示/隐藏当前句中文翻译；
+    <span class="kbd">Alt</span> + <span class="kbd">A</span>：把当前查到的单词加入生词本；
+    <span class="kbd">Esc</span>：收起单词卡和翻译；
     <span class="kbd">Tab</span> / <span class="kbd">Shift</span> + <span class="kbd">Tab</span>：下一句/上一句。
   </div>
 </div>
@@ -505,6 +508,12 @@ function renderInteractiveSentence(text) {
   sentence.appendChild(container);
 }
 
+function resetVocabButton(disabled) {
+  const button = document.getElementById("addVocab");
+  button.disabled = Boolean(disabled);
+  button.textContent = "加入生词本";
+}
+
 function hideWordCard() {
   activeWordLookup = null;
   const card = document.getElementById("wordCard");
@@ -513,7 +522,7 @@ function hideWordCard() {
   document.getElementById("wordMeaning").textContent = "";
   document.getElementById("wordMeta").textContent = "";
   document.getElementById("wordStatus").textContent = "";
-  document.getElementById("addVocab").disabled = true;
+  resetVocabButton(true);
 }
 
 function renderWordLookup(data) {
@@ -526,7 +535,7 @@ function renderWordLookup(data) {
     (data.model || "") +
     (data.service_tier ? " · " + data.service_tier : "");
   document.getElementById("wordStatus").textContent = "";
-  document.getElementById("addVocab").disabled = false;
+  resetVocabButton(false);
   document.getElementById("wordCard").classList.add("visible");
 }
 
@@ -545,7 +554,7 @@ async function lookupWord(word) {
   document.getElementById("wordMeaning").textContent = "正在查询…";
   document.getElementById("wordMeta").textContent = "";
   document.getElementById("wordStatus").textContent = "";
-  document.getElementById("addVocab").disabled = true;
+  resetVocabButton(true);
 
   if (wordLookupCache.has(cacheKey)) {
     renderWordLookup(wordLookupCache.get(cacheKey));
@@ -590,7 +599,7 @@ async function lookupWord(word) {
     activeWordLookup = null;
     document.getElementById("wordMeaning").textContent = "";
     document.getElementById("wordMeta").textContent = "";
-    document.getElementById("addVocab").disabled = true;
+    resetVocabButton(true);
 
     document.getElementById("wordStatus").textContent =
       error && error.name === "AbortError"
@@ -1045,6 +1054,25 @@ function renderTranslation(translation, model, serviceTier) {
   box.classList.add("visible");
 }
 
+function toggleTranslationShortcut() {
+  if (!items.length) {
+    return;
+  }
+
+  const box = document.getElementById("translation");
+  if (box.classList.contains("visible")) {
+    box.classList.remove("visible");
+    return;
+  }
+
+  if (box.textContent.trim()) {
+    box.classList.add("visible");
+    return;
+  }
+
+  void translateCurrent();
+}
+
 async function translateCurrent() {
   if (!items.length) {
     return;
@@ -1486,6 +1514,35 @@ document.getElementById("clear").addEventListener("click", function () {
 window.addEventListener(
   "keydown",
   function (event) {
+    if (event.key === "Escape") {
+      const translation = document.getElementById("translation");
+      hideWordCard();
+      translation.classList.remove("visible");
+      focusAnswer();
+      return;
+    }
+
+    if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      const altKey = event.key.toLowerCase();
+
+      if (altKey === "t") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleTranslationShortcut();
+        return;
+      }
+
+      if (altKey === "a") {
+        const addButton = document.getElementById("addVocab");
+        if (activeWordLookup && !addButton.disabled) {
+          event.preventDefault();
+          event.stopPropagation();
+          void addActiveWordToVocabulary();
+        }
+        return;
+      }
+    }
+
     if (event.key === "Control") {
       if (!event.repeat) {
         ctrlDown = true;
