@@ -4,11 +4,13 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
+from content_analysis import analyze_transcript
 from llm_service import ollama_available, unload_configured_ollama_models
 from media_service import resolve_media_path, transcribe_media
 from storage import (
     get_media_source,
     get_transcription_job,
+    save_content_resource,
     update_media_transcription,
     update_transcription_job,
 )
@@ -113,6 +115,18 @@ def _run_job(job_id: str) -> None:
             transcript=result,
         )
 
+        analysis = analyze_transcript(result["items"])
+        save_content_resource(
+            learner_id=media.get("learner_id") or job.get("learner_id"),
+            source_type="local",
+            source_id=media["id"],
+            source_url=f"/media/{media['id']}",
+            title=media["title"] or media["original_name"],
+            language=result["language"],
+            is_generated=True,
+            analysis=analysis,
+        )
+
         payload = {
             "source_type": "local",
             "media_id": media["id"],
@@ -129,6 +143,7 @@ def _run_job(job_id: str) -> None:
             "whisper_device": result["whisper_device"],
             "whisper_compute_type": result["whisper_compute_type"],
             "duration": result["duration"],
+            "analysis": analysis,
         }
         update_transcription_job(
             job_id,
