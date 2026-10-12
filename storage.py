@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 DEFAULT_LEARNER_NAME = "Default"
 
 
@@ -103,6 +103,31 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_transcription_jobs_media
                 ON transcription_jobs(media_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS content_resources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                learner_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                source_url TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                is_generated INTEGER NOT NULL DEFAULT 0,
+                cefr_level TEXT NOT NULL DEFAULT '',
+                difficulty_score REAL NOT NULL DEFAULT 0,
+                wpm REAL NOT NULL DEFAULT 0,
+                word_count INTEGER NOT NULL DEFAULT 0,
+                duration REAL NOT NULL DEFAULT 0,
+                analysis_version TEXT NOT NULL DEFAULT '',
+                analysis_json TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(learner_id, source_type, source_id),
+                FOREIGN KEY(learner_id) REFERENCES learners(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_content_resources_learner_level
+                ON content_resources(learner_id, cefr_level, updated_at DESC);
 
             CREATE TABLE IF NOT EXISTS practice_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2112,6 +2137,189 @@ def export_learner_data(
         ],
     }
 
+
+
+
+def save_content_resource(
+    *,
+    learner_id: int | None,
+    source_type: str,
+    source_id: str,
+    source_url: str,
+    title: str,
+    language: str,
+    is_generated: bool,
+    analysis: dict[str, Any],
+) -> dict[str, Any]:
+    import json
+
+    learner_id = _coerce_learner_id(learner_id)
+    source_type = str(source_type or "youtube").strip().lower() or "youtube"
+    source_id = str(source_id or "").strip()
+    if not source_id:
+        raise ValueError("source_id is required.")
+
+    payload = dict(analysis or {})
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO content_resources (
+                learner_id,
+                source_type,
+                source_id,
+                source_url,
+                title,
+                language,
+                is_generated,
+                cefr_level,
+                difficulty_score,
+                wpm,
+                word_count,
+                duration,
+                analysis_version,
+                analysis_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(learner_id, source_type, source_id) DO UPDATE SET
+                source_url = excluded.source_url,
+                title = excluded.title,
+                language = excluded.language,
+                is_generated = excluded.is_generated,
+                cefr_level = excluded.cefr_level,
+                difficulty_score = excluded.difficulty_score,
+                wpm = excluded.wpm,
+                word_count = excluded.word_count,
+                duration = excluded.duration,
+                analysis_version = excluded.analysis_version,
+                analysis_json = excluded.analysis_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                learner_id,
+                source_type,
+                source_id,
+                str(source_url or ""),
+                str(title or ""),
+                str(language or ""),
+                1 if is_generated else 0,
+                str(payload.get("cefr_level", "")),
+                float(payload.get("difficulty_score", 0) or 0),
+                float(payload.get("wpm", 0) or 0),
+                int(payload.get("word_count", 0) or 0),
+                float(payload.get("duration", 0) or 0),
+                str(payload.get("analysis_version", "")),
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+    return get_content_resource(
+        learner_id=learner_id,
+        source_type=source_type,
+        source_id=source_id,
+    ) or {}
+
+
+def get_content_resource(
+    *,
+    learner_id: int | None,
+    source_type: str,
+    source_id: str,
+) -> dict[str, Any] | None:
+    import json
+
+    learner_id = _coerce_learner_id(learner_id)
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM content_resources
+            WHERE learner_id = ?
+              AND source_type = ?
+              AND source_id = ?
+            """,
+            (
+                learner_id,
+                str(source_type or "youtube").strip().lower() or "youtube",
+                str(source_id or "").strip(),
+            ),
+        ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    item["id"] = int(item["id"])
+    item["learner_id"] = int(item["learner_id"])
+    item["is_generated"] = bool(item["is_generated"])
+    try:
+        item["analysis"] = json.loads(item.pop("analysis_json") or "{}")
+    except json.JSONDecodeError:
+        item["analysis"] = {}
+    return item
+
+
+def list_content_resources(
+    learner_id: int | None = None,
+    *,
+    level: str = "",
+    source_type: str = "",
+    query: str = "",
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    import json
+
+    learner_id = _coerce_learner_id(learner_id)
+    level = str(level or "").strip().upper()
+    source_type = str(source_type or "").strip().lower()
+    query = " ".join(str(query or "").strip().split())
+    limit = max(1, min(int(limit), 500))
+
+    clauses = ["cr.learner_id = ?"]
+    params: list[Any] = [learner_id]
+    if level in {"A2", "B1", "B2", "C1"}:
+        clauses.append("cr.cefr_level = ?")
+        params.append(level)
+    if source_type in {"youtube", "local"}:
+        clauses.append("cr.source_type = ?")
+        params.append(source_type)
+    if query:
+        clauses.append("(cr.title LIKE ? OR cr.source_url LIKE ?)")
+        pattern = f"%{query}%"
+        params.extend([pattern, pattern])
+
+    params.extend([learner_id, learner_id, limit])
+    where_sql = " AND ".join(clauses)
+
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                cr.*,
+                COUNT(DISTINCT ps.id) AS session_count,
+                COALESCE(MAX(ps.updated_at), cr.updated_at) AS last_used_at
+            FROM content_resources cr
+            LEFT JOIN practice_sessions ps
+              ON ps.learner_id = ?
+             AND ps.source_type = cr.source_type
+             AND ps.video_id = cr.source_id
+            WHERE {where_sql}
+            GROUP BY cr.id
+            ORDER BY last_used_at DESC, cr.updated_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["id"] = int(item["id"])
+        item["learner_id"] = int(item["learner_id"])
+        item["is_generated"] = bool(item["is_generated"])
+        item["session_count"] = int(item["session_count"] or 0)
+        try:
+            item["analysis"] = json.loads(item.pop("analysis_json") or "{}")
+        except json.JSONDecodeError:
+            item["analysis"] = {}
+        result.append(item)
+    return result
 
 
 def update_media_transcription(
