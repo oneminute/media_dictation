@@ -66,6 +66,104 @@ class ContentAnalysisTests(unittest.TestCase):
         )
 
 
+    def test_next_practice_prefers_unfinished_session(self):
+        resources = [
+            {
+                "source_type": "youtube",
+                "source_id": "fresh-b2",
+                "title": "Fresh B2",
+                "session_count": 0,
+                "analysis": {
+                    "cefr_level": "B2",
+                    "difficulty_score": 58,
+                    "confidence": "high",
+                    "duration": 600,
+                    "word_count": 900,
+                },
+            },
+            {
+                "source_type": "youtube",
+                "source_id": "unfinished-b1",
+                "title": "Unfinished B1",
+                "session_count": 1,
+                "analysis": {
+                    "cefr_level": "B1",
+                    "difficulty_score": 43,
+                    "confidence": "high",
+                    "duration": 540,
+                    "word_count": 760,
+                },
+            },
+        ]
+        sessions = [
+            {
+                "id": 17,
+                "source_type": "youtube",
+                "video_id": "unfinished-b1",
+                "completed": False,
+                "progress_percent": 40,
+                "total_items": 20,
+                "error_count": 3,
+            }
+        ]
+
+        ranked = content_analysis.rank_resources_for_next_practice(
+            resources,
+            "B2",
+            sessions,
+            limit=2,
+        )
+
+        self.assertEqual(ranked[0]["source_id"], "unfinished-b1")
+        self.assertEqual(ranked[0]["next_action"], "resume")
+        self.assertEqual(ranked[0]["resume_session_id"], 17)
+        self.assertIn("40%", ranked[0]["recommendation_reasons"][0])
+
+    def test_next_practice_prefers_new_same_level_material(self):
+        resources = [
+            {
+                "source_type": "youtube",
+                "source_id": "new-b2",
+                "title": "New B2",
+                "session_count": 0,
+                "analysis": {
+                    "cefr_level": "B2",
+                    "difficulty_score": 57,
+                    "confidence": "medium",
+                    "duration": 720,
+                    "word_count": 1000,
+                },
+            },
+            {
+                "source_type": "youtube",
+                "source_id": "repeated-b2",
+                "title": "Repeated B2",
+                "session_count": 4,
+                "analysis": {
+                    "cefr_level": "B2",
+                    "difficulty_score": 56,
+                    "confidence": "high",
+                    "duration": 700,
+                    "word_count": 980,
+                },
+            },
+        ]
+
+        ranked = content_analysis.rank_resources_for_next_practice(
+            resources,
+            "B2",
+            [],
+            limit=2,
+        )
+
+        self.assertEqual(ranked[0]["source_id"], "new-b2")
+        self.assertEqual(ranked[0]["next_action"], "new")
+        self.assertGreater(
+            ranked[0]["recommendation_score"],
+            ranked[1]["recommendation_score"],
+        )
+
+
 class ContentResourceStorageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
