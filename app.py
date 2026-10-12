@@ -17,6 +17,7 @@ from assessment_service import (
     score_answer,
     summarize_responses,
 )
+from content_analysis import analyze_transcript, level_recommendation
 from job_service import enqueue_transcription
 from media_service import (
     max_upload_bytes,
@@ -62,6 +63,7 @@ from storage import (
     export_learner_data,
     finish_assessment_run,
     get_assessment_run,
+    get_content_resource,
     get_default_learner_id,
     get_learning_report,
     get_media_source,
@@ -79,6 +81,7 @@ from storage import (
     init_db,
     latest_transcription_job,
     list_assessment_runs,
+    list_content_resources,
     list_audit_events,
     list_learners,
     list_media_sources,
@@ -89,6 +92,7 @@ from storage import (
     record_sentence_review,
     rename_media_source,
     review_vocabulary,
+    save_content_resource,
     save_media_source,
     save_translation,
     save_word_translation,
@@ -378,6 +382,61 @@ def assessment_center():
     return send_from_directory("static", "assessment.html")
 
 
+@app.get("/resources")
+def resource_library():
+    return send_from_directory("static", "resources.html")
+
+
+def _latest_learner_level(learner_id: int | None) -> str:
+    runs = list_assessment_runs(learner_id, limit=1)
+    if not runs:
+        return ""
+    return str(runs[0].get("estimated_level") or "").upper()
+
+
+def _decorate_resource_fit(item: dict, learner_id: int | None) -> dict:
+    result = dict(item)
+    analysis = dict(result.get("analysis") or {})
+    result["recommendation"] = level_recommendation(
+        analysis.get("cefr_level") or result.get("cefr_level"),
+        _latest_learner_level(learner_id),
+    )
+    return result
+
+
+@app.get("/api/resources")
+def resource_list():
+    learner_id = request_learner_id()
+    try:
+        items = list_content_resources(
+            learner_id,
+            level=request.args.get("level", ""),
+            source_type=request.args.get("source_type", ""),
+            query=request.args.get("q", ""),
+            limit=int(request.args.get("limit", "200")),
+        )
+        learner_level = _latest_learner_level(learner_id)
+        return jsonify(
+            {
+                "ok": True,
+                "learner_level": learner_level,
+                "items": [
+                    {
+                        **item,
+                        "recommendation": level_recommendation(
+                            (item.get("analysis") or {}).get("cefr_level")
+                            or item.get("cefr_level"),
+                            learner_level,
+                        ),
+                    }
+                    for item in items
+                ],
+            }
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"资源库读取失败：{exc}"}), 400
+
+
 @app.get("/media/<media_id>")
 def media_file(media_id: str):
     source = get_media_source(media_id)
@@ -494,6 +553,26 @@ def media_transcript(media_id: str):
             }
         ), 409
 
+    learner_id = source.get("learner_id") or request_learner_id()
+    resource = get_content_resource(
+        learner_id=learner_id,
+        source_type="local",
+        source_id=source["id"],
+    )
+    if resource is None:
+        analysis = analyze_transcript(transcript.get("items", []))
+        resource = save_content_resource(
+            learner_id=learner_id,
+            source_type="local",
+            source_id=source["id"],
+            source_url=f"/media/{source['id']}",
+            title=source["title"] or source["original_name"],
+            language=transcript.get("language", "en"),
+            is_generated=True,
+            analysis=analysis,
+        )
+    analysis = resource.get("analysis") or {}
+
     return jsonify(
         {
             "ok": True,
@@ -512,6 +591,11 @@ def media_transcript(media_id: str):
             "whisper_device": transcript.get("whisper_device", ""),
             "whisper_compute_type": transcript.get("whisper_compute_type", ""),
             "duration": transcript.get("duration", 0),
+            "analysis": analysis,
+            "recommendation": level_recommendation(
+                analysis.get("cefr_level"),
+                _latest_learner_level(learner_id),
+            ),
         }
     )
 
@@ -1249,12 +1333,30 @@ def transcript():
         result = fetch_best_transcript(video_id)
         if not result["items"]:
             raise RuntimeError("The transcript contains no usable spoken captions.")
+        learner_id = request_learner_id()
+        video_title = fetch_video_title(video_id)
+        analysis = analyze_transcript(result["items"])
+        save_content_resource(
+            learner_id=learner_id,
+            source_type="youtube",
+            source_id=video_id,
+            source_url=value,
+            title=video_title,
+            language=str(result.get("language") or result.get("language_code") or ""),
+            is_generated=bool(result.get("is_generated", False)),
+            analysis=analysis,
+        )
         return jsonify(
             {
                 "ok": True,
                 "video_id": video_id,
-                "video_title": fetch_video_title(video_id),
+                "video_title": video_title,
                 "segmentation_version": SEGMENTATION_VERSION,
+                "analysis": analysis,
+                "recommendation": level_recommendation(
+                    analysis.get("cefr_level"),
+                    _latest_learner_level(learner_id),
+                ),
                 **result,
             }
         )
