@@ -98,6 +98,9 @@ test("new household pages load", async ({ page }) => {
   await page.goto("/library");
   await expect(page.getByRole("heading", { name: "媒体库" })).toBeVisible();
 
+  await page.goto("/resources");
+  await expect(page.getByRole("heading", { name: "学习资源库" })).toBeVisible();
+
   await page.goto("/assessment");
   await expect(page.getByRole("heading", { name: "听力水平评估" })).toBeVisible();
   await expect(page.getByRole("button", { name: "开始 12 题评估" })).toBeVisible();
