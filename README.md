@@ -74,6 +74,37 @@ OLLAMA_AUTO_WORD_TIMEOUT_SECONDS=7
 Ollama does not need to be exposed to the LAN. Media Dictation calls
 `127.0.0.1:12000` on the server PC.
 
+### Automatic content difficulty + learning resource library
+
+Every YouTube transcript and completed local Whisper transcript is analyzed
+locally with a deterministic, zero-API-cost content estimator. The result is a
+**content difficulty estimate**, not an official CEFR assessment.
+
+The analyzer combines:
+
+- spoken pace in words per minute (WPM);
+- average dictation-phrase length;
+- multi-syllable / longer-word load;
+- lexical diversity;
+- clause and logical-connector density;
+- a softened Flesch-Kincaid readability signal.
+
+It produces an A2 / B1 / B2 / C1 estimate, a 0-100 difficulty score,
+confidence, and short reasons. If the learner has completed the built-in
+listening screening, the UI also labels each resource as **偏容易 / 合适 /
+有挑战 / 偏难** relative to the learner's latest screening level.
+
+Analyzed material is saved to SQLite and appears at:
+
+```
+/resources
+```
+
+The resource library supports learner-specific filtering by difficulty,
+YouTube/local source, and title/link search. A saved YouTube resource can be
+opened directly as a new dictation session; local resources reopen their saved
+Whisper transcript.
+
 ### Local media + background Whisper
 
 Local media is optional and does not change the normal YouTube path.
@@ -469,6 +500,7 @@ llm_service.py          Ollama/OpenAI providers, routing, AI summaries
 media_service.py        local media persistence + optional faster-whisper
 job_service.py          persisted background Whisper worker
 assessment_service.py   fixed-material CEFR-aligned screening logic
+content_analysis.py      transcript pace/readability/CEFR content estimate
 storage.py              SQLite schema, migrations, repositories, analytics
 
 static/
@@ -477,12 +509,14 @@ static/
   review.html            targeted weak-sentence review
   library.html           local media library and job progress
   assessment.html        fixed-material listening screening
+  resources.html         analyzed YouTube/local learning resource library
 
 tests/
   test_segmentation.py
   test_storage_v2.py
   test_api_v2.py
   test_media_service.py
+  test_content_analysis.py
   test_remaining_features.py
   e2e/core.spec.js
 ```
