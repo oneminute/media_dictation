@@ -261,3 +261,13 @@ OpenAI and must not be presented as an official learner CEFR result.
 analysis is refreshed when captions are loaded; local-media analysis is refreshed
 when Whisper completes. `/api/resources` adds a dynamic fit label based on the
 learner's latest completed listening screening.
+
+
+### Next-practice ranking
+
+`rank_resources_for_next_practice` combines saved content analysis with recent
+practice-session history. Incomplete sessions receive the strongest continuity
+boost; otherwise the rank favors CEFR-level fit, unseen material, practical
+duration, and higher-confidence analysis. Recent high-error completed sessions
+receive a small review boost. The ranking is deterministic, explainable, and
+local-only.
