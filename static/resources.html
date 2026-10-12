@@ -106,7 +106,7 @@ function render(items,learnerLevel){
         '<span class="badge level">'+esc(a.cefr_level||item.cefr_level||"?")+'</span>'+
         '<span class="badge">'+esc(item.source_type==="local"?"本地媒体":"YouTube")+'</span>'+
         '<span class="badge">难度 '+Number(a.difficulty_score||item.difficulty_score||0).toFixed(0)+'/100</span>'+
-        '<span class="badge">'+esc(a.confidence||"")+" 置信度</span>'+
+        '<span class="badge">'+esc(a.confidence||"")+' 置信度</span>'+
       '</div>'+
       '<div class="meta">'+
         fmtDuration(a.duration||item.duration)+' · '+
