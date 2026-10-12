@@ -92,6 +92,116 @@ test("core dictation flow, punctuation checking, export and restore", async ({ p
   await expect(page.locator("#learnerSelect")).toContainText("E2E Learner (2)");
 });
 
+test("word-card state resets and translation shortcuts work", async ({ page }) => {
+  await mockYouTube(page);
+
+  await page.route("**/api/transcript?*", async route => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        video_id: "wordstate1",
+        video_title: "Word State",
+        language: "English",
+        language_code: "en",
+        is_generated: false,
+        segmentation_version: "e2e-v1",
+        items: [
+          {
+            text: "Hello world again.",
+            start: 0,
+            end: 1,
+            duration: 1
+          }
+        ]
+      })
+    });
+  });
+
+  await page.route("**/api/word-lookup", async route => {
+    const body = route.request().postDataJSON();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        word: body.word,
+        normalized_word: String(body.word || "").toLowerCase(),
+        translation: "释义-" + body.word,
+        model: "e2e",
+        provider: "test",
+        service_tier: "",
+        cached: false
+      })
+    });
+  });
+
+  await page.route("**/api/vocabulary", async route => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        item: {
+          id: 1,
+          normalized_word: String(body.word || "").toLowerCase()
+        }
+      })
+    });
+  });
+
+  await page.route("**/api/translate", async route => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        translation: "你好，世界。",
+        model: "e2e",
+        provider: "test",
+        service_tier: ""
+      })
+    });
+  });
+
+  await page.goto("/");
+  await page.locator("#url").fill("https://youtu.be/wordstate1");
+  await page.getByRole("button", { name: "获取字幕并开始" }).click();
+  await expect(page.locator("#status")).toContainText("已生成 1 个听写句子");
+
+  await page.locator("#show").click();
+
+  const words = page.locator(".word-token");
+  await words.nth(0).click();
+  await expect(page.locator("#addVocab")).toHaveText("加入生词本");
+  await page.locator("#addVocab").click();
+  await expect(page.locator("#addVocab")).toHaveText("已加入");
+
+  await words.nth(1).click();
+  await expect(page.locator("#wordTitle")).toHaveText("world");
+  await expect(page.locator("#addVocab")).toHaveText("加入生词本");
+  await expect(page.locator("#addVocab")).toBeEnabled();
+
+  await page.keyboard.press("Alt+T");
+  await expect(page.locator("#translation")).toBeVisible();
+  await expect(page.locator("#translation")).toContainText("你好，世界。");
+
+  await page.keyboard.press("Alt+T");
+  await expect(page.locator("#translation")).toBeHidden();
+
+  await page.keyboard.press("Alt+T");
+  await expect(page.locator("#translation")).toBeVisible();
+
+  await page.keyboard.press("Alt+A");
+  await expect(page.locator("#addVocab")).toHaveText("已加入");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#wordCard")).toBeHidden();
+  await expect(page.locator("#translation")).toBeHidden();
+});
+
 test("new household pages load", async ({ page }) => {
   await mockYouTube(page);
 
