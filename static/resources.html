@@ -25,6 +25,11 @@ button,.button{cursor:pointer}.primary{background:var(--primary);color:#fff;bord
 .fit{margin-top:7px}.fit.good{color:var(--ok)}.fit.challenge{color:var(--warn)}.fit.hard{color:var(--bad)}
 .reason{margin-top:7px}.empty{text-align:center;color:var(--muted);padding:36px}
 .summary{font-size:14px;color:var(--muted)}.summary strong{color:var(--text)}
+.recommend-card{border-color:#bfdbfe;background:linear-gradient(180deg,#eff6ff 0%,#fff 100%)}
+.recommend-kicker{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#1d4ed8;margin-bottom:7px}
+.recommend-title{font-size:21px;font-weight:800;line-height:1.35}
+.recommend-why{margin-top:9px;color:#475467;font-size:13px;line-height:1.65}
+.recommend-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 @media(max-width:760px){.header{align-items:flex-start;flex-direction:column}.resource{grid-template-columns:1fr}.actions{justify-content:flex-start}.filters input{min-width:100%}}
 </style>
 </head>
@@ -41,6 +46,11 @@ button,.button{cursor:pointer}.primary{background:var(--primary);color:#fff;bord
       <a class="button" href="/library">媒体库</a>
       <a class="button primary" href="/">返回听写</a>
     </div>
+  </div>
+
+  <div id="nextRecommendation" class="card recommend-card">
+    <div class="recommend-kicker">下一条推荐</div>
+    <div id="recommendationBody" class="summary">正在计算最适合的下一条练习…</div>
   </div>
 
   <div class="card">
@@ -68,6 +78,8 @@ button,.button{cursor:pointer}.primary{background:var(--primary);color:#fff;bord
 
 <script>
 let activeLearnerId=Number(localStorage.getItem("mediaDictationLearnerId")||0);
+let recommendationItems=[];
+let recommendationIndex=0;
 
 function fmtDuration(sec){
   sec=Math.max(0,Math.round(Number(sec||0)));
@@ -89,6 +101,55 @@ function startHref(item){
   if(item.source_type==="local")return "/?media="+encodeURIComponent(item.source_id);
   return "/?url="+encodeURIComponent(item.source_url||("https://www.youtube.com/watch?v="+item.source_id));
 }
+function recommendationHref(item){
+  if(item.next_action==="resume"&&item.resume_session_id){
+    return "/?resume="+encodeURIComponent(item.resume_session_id);
+  }
+  return startHref(item);
+}
+function renderRecommendation(items,learnerLevel){
+  recommendationItems=items||[];
+  recommendationIndex=Math.min(recommendationIndex,Math.max(0,recommendationItems.length-1));
+  const host=document.getElementById("recommendationBody");
+  if(!recommendationItems.length){
+    host.innerHTML='资源库里还没有可推荐的材料。先载入一个 YouTube 视频或完成一次本地 Whisper 转写。';
+    return;
+  }
+  const item=recommendationItems[recommendationIndex];
+  const a=item.analysis||{};
+  const reasons=(item.recommendation_reasons||[]).slice(0,4)
+    .map(x=>'<div>• '+esc(x)+'</div>').join("");
+  const actionLabel=item.next_action==="resume"?"继续上次练习":"开始推荐练习";
+  host.innerHTML=
+    '<div class="recommend-title">'+esc(item.title||item.source_id)+'</div>'+
+    '<div class="badges">'+
+      '<span class="badge level">'+esc(a.cefr_level||item.cefr_level||"?")+'</span>'+
+      '<span class="badge">'+esc(item.source_type==="local"?"本地媒体":"YouTube")+'</span>'+
+      '<span class="badge">'+Number(a.wpm||item.wpm||0).toFixed(0)+' WPM</span>'+
+      '<span class="badge">'+fmtDuration(a.duration||item.duration)+'</span>'+
+    '</div>'+
+    '<div class="recommend-why">'+reasons+'</div>'+
+    '<div class="recommend-actions">'+
+      '<a class="button primary" href="'+esc(recommendationHref(item))+'">'+esc(actionLabel)+'</a>'+
+      (recommendationItems.length>1?'<button id="nextAlternative">换一个推荐</button>':'')+
+      '<a class="button" href="/assessment">'+(learnerLevel?'重新评估水平':'先做水平评估')+'</a>'+
+    '</div>';
+  const alt=document.getElementById("nextAlternative");
+  if(alt){
+    alt.addEventListener("click",function(){
+      recommendationIndex=(recommendationIndex+1)%recommendationItems.length;
+      renderRecommendation(recommendationItems,learnerLevel);
+    });
+  }
+}
+async function loadRecommendations(){
+  const q=new URLSearchParams({learner_id:String(activeLearnerId),limit:"3"});
+  const r=await fetch("/api/resources/recommendations?"+q.toString()),d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||"无法生成推荐");
+  recommendationIndex=0;
+  renderRecommendation(d.items||[],d.learner_level||"");
+}
+
 function render(items,learnerLevel){
   const host=document.getElementById("list");host.textContent="";
   document.getElementById("summary").innerHTML=
@@ -124,7 +185,7 @@ function render(items,learnerLevel){
     card.append(left,actions);host.appendChild(card);
   });
 }
-async function load(){
+async function loadList(){
   const q=new URLSearchParams({learner_id:String(activeLearnerId)});
   const level=document.getElementById("levelFilter").value;
   const source=document.getElementById("sourceFilter").value;
@@ -134,14 +195,17 @@ async function load(){
   if(!r.ok||!d.ok)throw new Error(d.error||"资源库读取失败");
   render(d.items||[],d.learner_level||"");
 }
+async function load(){
+  await Promise.all([loadList(),loadRecommendations()]);
+}
 let searchTimer=null;
 document.getElementById("learnerSelect").addEventListener("change",async function(){
   activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));await load();
 });
-document.getElementById("levelFilter").addEventListener("change",()=>load().catch(e=>alert(e.message||e)));
-document.getElementById("sourceFilter").addEventListener("change",()=>load().catch(e=>alert(e.message||e)));
+document.getElementById("levelFilter").addEventListener("change",()=>loadList().catch(e=>alert(e.message||e)));
+document.getElementById("sourceFilter").addEventListener("change",()=>loadList().catch(e=>alert(e.message||e)));
 document.getElementById("refresh").addEventListener("click",()=>load().catch(e=>alert(e.message||e)));
-document.getElementById("search").addEventListener("input",function(){clearTimeout(searchTimer);searchTimer=setTimeout(()=>load().catch(e=>alert(e.message||e)),250)});
+document.getElementById("search").addEventListener("input",function(){clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadList().catch(e=>alert(e.message||e)),250)});
 (async function(){try{await loadLearners();await load()}catch(e){document.getElementById("list").innerHTML='<div class="card empty">'+esc(e.message||e)+'</div>'}})();
 </script>
 </body>
