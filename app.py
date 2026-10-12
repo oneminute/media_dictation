@@ -511,6 +511,14 @@ def media_job_status(job_id: str):
     job = get_transcription_job(job_id)
     if job is None:
         return jsonify({"ok": False, "error": "找不到转写任务。"}), 404
+    result = job.get("result")
+    if isinstance(result, dict) and isinstance(result.get("analysis"), dict):
+        result = dict(result)
+        result["recommendation"] = level_recommendation(
+            result["analysis"].get("cefr_level"),
+            _latest_learner_level(job.get("learner_id")),
+        )
+        job = {**job, "result": result}
     return jsonify({"ok": True, "job": job})
 
 
