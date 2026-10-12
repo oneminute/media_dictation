@@ -214,6 +214,7 @@ button.warn{background:#fef3c7;color:#92400e}
       </select>
       <button id="addLearner" class="small-button">+ 学习者</button>
       <a href="/review">错句复习</a>
+      <a href="/resources">学习资源库</a>
       <a href="/library">媒体库</a>
       <a href="/assessment">水平评估</a>
       <a href="/learning">学习中心</a>
@@ -232,6 +233,7 @@ button.warn{background:#fef3c7;color:#92400e}
     </div>
     <div class="source-note">本地媒体会上传到这台 Media Dictation 服务器并由本机 Whisper 转写；需要先运行 setup_whisper_windows.bat。</div>
     <div id="status" class="status">选择 YouTube 链接或本地媒体开始。载入后单按 Ctrl 重播当前句。</div>
+    <div id="contentAnalysis" class="analysis-box"></div>
   </div>
 
   <div class="grid">
@@ -319,6 +321,7 @@ let segmentationVersion = "";
 let sourceType = "youtube";
 let mediaId = null;
 let sourceUrl = "";
+let currentAnalysis = null;
 let mediaPlayer = null;
 let sessionId = null;
 let activeLearnerId = null;
@@ -413,6 +416,33 @@ function formatTime(seconds) {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return String(minutes).padStart(2, "0") + ":" + String(rest).padStart(2, "0");
+}
+
+function renderContentAnalysis(analysis, recommendation) {
+  currentAnalysis = analysis || null;
+  const box = document.getElementById("contentAnalysis");
+  if (!analysis || !analysis.cefr_level) {
+    box.classList.remove("visible");
+    box.textContent = "";
+    return;
+  }
+  const fit = recommendation || {};
+  const reasons = (analysis.reasons || []).slice(0, 2).join(" ");
+  box.innerHTML =
+    '<div class="analysis-head">' +
+      '<span class="analysis-level">' + String(analysis.cefr_level) + '</span>' +
+      '<span class="badge">内容难度估计</span>' +
+      '<span class="badge">难度 ' + Number(analysis.difficulty_score || 0).toFixed(0) + '/100</span>' +
+      '<span class="badge">' + String(analysis.confidence || "") + ' 置信度</span>' +
+    '</div>' +
+    '<div class="analysis-metrics">' +
+      Number(analysis.wpm || 0).toFixed(0) + ' WPM · ' +
+      Number(analysis.word_count || 0) + ' 词 · 平均 ' +
+      Number(analysis.avg_phrase_words || 0).toFixed(1) + ' 词/片段' +
+      (reasons ? ' · ' + reasons : '') +
+    '</div>' +
+    (fit.label ? '<div class="analysis-fit"><strong>' + String(fit.label) + '</strong> · ' + String(fit.detail || "") + '</div>' : '');
+  box.classList.add("visible");
 }
 
 function updateUI() {
@@ -1130,7 +1160,10 @@ async function loadVideo(options) {
   status.textContent = "正在读取字幕…";
 
   try {
-    const response = await fetch("/api/transcript?url=" + encodeURIComponent(url));
+    const response = await fetch(
+      "/api/transcript?url=" + encodeURIComponent(url) +
+      "&learner_id=" + encodeURIComponent(activeLearnerId || "")
+    );
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
@@ -1144,6 +1177,7 @@ async function loadVideo(options) {
     videoId = data.video_id;
     videoTitle = data.video_title || "";
     segmentationVersion = data.segmentation_version || "";
+    renderContentAnalysis(data.analysis, data.recommendation);
     index = Math.max(
       0,
       Math.min(
@@ -1271,6 +1305,7 @@ async function loadLocalMedia() {
     videoId = data.video_id || data.media_id;
     videoTitle = data.video_title || file.name;
     segmentationVersion = data.segmentation_version || "";
+    renderContentAnalysis(data.analysis, data.recommendation);
     index = 0;
     reveal = false;
 
@@ -1304,7 +1339,14 @@ async function resumeFromQuery() {
   const params = new URLSearchParams(window.location.search);
   const resumeId = params.get("resume");
   const savedMediaId = params.get("media");
+  const savedUrl = params.get("url");
   const status = document.getElementById("status");
+
+  if (!resumeId && !savedMediaId && savedUrl) {
+    document.getElementById("url").value = savedUrl;
+    await loadVideo();
+    return;
+  }
 
   if (!resumeId && savedMediaId) {
     status.textContent = "正在从媒体库读取已保存的 Whisper 转写…";
@@ -1325,6 +1367,7 @@ async function resumeFromQuery() {
       videoId = data.video_id || data.media_id;
       videoTitle = data.video_title || "";
       segmentationVersion = data.segmentation_version || "";
+      renderContentAnalysis(data.analysis, data.recommendation);
       index = 0;
       reveal = false;
 
@@ -1373,6 +1416,7 @@ async function resumeFromQuery() {
 
     if (session.items && session.items.length) {
       items = session.items;
+      renderContentAnalysis(null, null);
       sourceType = session.source_type || "youtube";
       mediaId = session.media_id || null;
       sourceUrl = session.source_url || "";
