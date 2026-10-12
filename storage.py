@@ -2481,6 +2481,14 @@ def rename_media_source(
             """,
             (cleaned, str(media_id), learner_id, learner_id),
         )
+        conn.execute(
+            """
+            UPDATE content_resources
+            SET title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE learner_id = ? AND source_type = 'local' AND source_id = ?
+            """,
+            (cleaned, learner_id, str(media_id)),
+        )
     return get_media_source(str(media_id)) or {}
 
 
@@ -2527,6 +2535,13 @@ def delete_media_source(
                 (str(media_id), learner_id, learner_id),
             )
 
+        conn.execute(
+            """
+            DELETE FROM content_resources
+            WHERE learner_id = ? AND source_type = 'local' AND source_id = ?
+            """,
+            (learner_id, str(media_id)),
+        )
         conn.execute("DELETE FROM media_sources WHERE id = ?", (str(media_id),))
 
     return {
