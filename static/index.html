@@ -273,9 +273,11 @@ button.warn{background:#fef3c7;color:#92400e}
         <button id="next">下一句 →</button>
         <button id="show" class="warn">显示/隐藏原文</button>
         <button id="translate">中文翻译</button>
+        <button id="analyzeSentence" disabled>分析当前句</button>
       </div>
 
       <div id="translation" class="translation-box"></div>
+      <div id="sentenceAnalysis" class="translation-box" style="white-space:pre-wrap"></div>
 
       <div class="answer-label">
         <span>你的听写</span>
@@ -332,6 +334,9 @@ let activeLlmProvider = localStorage.getItem("mediaDictationLlmProvider") || "au
 let sentenceStartedAt = Date.now();
 let stopTimer = null;
 const translationCache = new Map();
+const sentenceAnalysisCache = new Map();
+let completedSentenceKey = null;
+let sentenceAnalysisRequestId = 0;
 const wordLookupCache = new Map();
 let activeWordLookup = null;
 
@@ -666,6 +671,12 @@ function resetForSentence() {
   translation.textContent = "";
   translation.classList.remove("visible");
   hideWordCard();
+  completedSentenceKey = null;
+  sentenceAnalysisRequestId += 1;
+  document.getElementById("analyzeSentence").disabled = true;
+  const analysis = document.getElementById("sentenceAnalysis");
+  analysis.textContent = "";
+  analysis.classList.remove("visible");
   reveal = false;
   updateUI();
   focusAnswer();
@@ -1035,7 +1046,47 @@ function checkCurrent() {
   void logAttempt("correct", answerBefore, null);
   document.getElementById("feedback").innerHTML =
     '<span class="ok">✓ 全部正确</span>';
+  completedSentenceKey = items[index].text;
+  document.getElementById("analyzeSentence").disabled = false;
   focusAnswer();
+}
+
+async function analyzeCurrentSentence() {
+  if (!items.length || completedSentenceKey !== items[index].text) return;
+
+  const source = items[index].text;
+  const box = document.getElementById("sentenceAnalysis");
+  const button = document.getElementById("analyzeSentence");
+  const requestId = ++sentenceAnalysisRequestId;
+  const key = activeLlmProvider + "\\n" + source;
+
+  box.classList.add("visible");
+  if (sentenceAnalysisCache.has(key)) {
+    box.textContent = sentenceAnalysisCache.get(key);
+    return;
+  }
+
+  button.disabled = true;
+  box.textContent = "正在分析句子结构和可能的歧义词义…";
+  try {
+    const response = await fetch("/api/sentence-analysis", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: source, provider: activeLlmProvider})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "句子分析失败。");
+    sentenceAnalysisCache.set(key, data.analysis);
+    if (requestId === sentenceAnalysisRequestId && completedSentenceKey === source) {
+      box.textContent = data.analysis;
+    }
+  } catch (error) {
+    if (requestId === sentenceAnalysisRequestId) {
+      box.textContent = String(error.message || error);
+    }
+  } finally {
+    if (requestId === sentenceAnalysisRequestId) button.disabled = false;
+  }
 }
 
 function renderTranslation(translation, model, serviceTier) {
@@ -1487,6 +1538,7 @@ document.getElementById("llmProviderSelect").addEventListener("change", function
   activeLlmProvider = this.value || "auto";
   localStorage.setItem("mediaDictationLlmProvider", activeLlmProvider);
   translationCache.clear();
+  sentenceAnalysisCache.clear();
   wordLookupCache.clear();
 });
 document.getElementById("addLearner").addEventListener("click", addLearner);
@@ -1503,6 +1555,7 @@ document.getElementById("next").addEventListener("click", function () {
 });
 document.getElementById("show").addEventListener("click", toggleOriginal);
 document.getElementById("translate").addEventListener("click", translateCurrent);
+document.getElementById("analyzeSentence").addEventListener("click", analyzeCurrentSentence);
 document.getElementById("addVocab").addEventListener("click", addActiveWordToVocabulary);
 document.getElementById("check").addEventListener("click", checkCurrent);
 document.getElementById("clear").addEventListener("click", function () {
