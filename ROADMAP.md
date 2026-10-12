@@ -89,6 +89,15 @@
 - [x] Match resource difficulty against the learner's latest screening level
 - [x] Reopen saved YouTube/local resources as new practice sessions
 
+### RECOMMEND-001 — automatic next-practice recommendation — completed
+
+- [x] Recommend unfinished sessions before starting something new
+- [x] Rank by learner-level fit, novelty, duration and analysis confidence
+- [x] Use recent practice errors as a small re-practice signal
+- [x] Return up to three explainable alternatives
+- [x] Show the recommendation at the top of the learning resource library
+- [x] Resume an unfinished session directly from the recommendation card
+
 ## Future enhancements — not V1 blockers
 
 These are useful improvements, but the current household system does not depend
