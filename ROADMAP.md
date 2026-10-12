@@ -76,6 +76,19 @@
 - [x] GitHub Actions CI
 - [x] Transcript / LLM / media / background-job service extraction
 
+## V2 content intelligence
+
+### CONTENT-001 — automatic difficulty analysis and learning resource library — completed
+
+- [x] Analyze every loaded YouTube transcript without an LLM call
+- [x] Analyze completed local Whisper transcripts automatically
+- [x] Estimate A2 / B1 / B2 / C1 content difficulty
+- [x] Calculate WPM, phrase length, lexical/syntax complexity and readability
+- [x] Persist learner-specific analyzed resources in SQLite
+- [x] Resource library with level/source/search filters
+- [x] Match resource difficulty against the learner's latest screening level
+- [x] Reopen saved YouTube/local resources as new practice sessions
+
 ## Future enhancements — not V1 blockers
 
 These are useful improvements, but the current household system does not depend
