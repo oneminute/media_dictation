@@ -2284,8 +2284,8 @@ def list_content_resources(
         pattern = f"%{query}%"
         params.extend([pattern, pattern])
 
-    params.extend([learner_id, learner_id, limit])
     where_sql = " AND ".join(clauses)
+    query_params = [learner_id, *params, limit]
 
     with connect() as conn:
         rows = conn.execute(
@@ -2304,7 +2304,7 @@ def list_content_resources(
             ORDER BY last_used_at DESC, cr.updated_at DESC
             LIMIT ?
             """,
-            params,
+            query_params,
         ).fetchall()
 
     result: list[dict[str, Any]] = []
