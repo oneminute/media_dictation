@@ -248,3 +248,16 @@ The current LAN mode assumes a trusted home/private network.
 
 The rate limiter is deliberately process-local. It is appropriate for the
 single-host Waitress household deployment, not a distributed public service.
+
+
+## Content intelligence
+
+`content_analysis.py` is deliberately deterministic and local. Transcript text
+and timestamps are converted into pace, lexical, syntax and readability metrics,
+then into a coarse A2/B1/B2/C1 **content** estimate. It does not call Ollama or
+OpenAI and must not be presented as an official learner CEFR result.
+
+`content_resources` stores one analyzed resource per learner/source. YouTube
+analysis is refreshed when captions are loaded; local-media analysis is refreshed
+when Whisper completes. `/api/resources` adds a dynamic fit label based on the
+learner's latest completed listening screening.
