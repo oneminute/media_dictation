@@ -202,6 +202,45 @@ test("word-card state resets and translation shortcuts work", async ({ page }) =
   await expect(page.locator("#translation")).toBeHidden();
 });
 
+test("sentence analysis unlocks after correct dictation", async ({ page }) => {
+  await mockYouTube(page);
+  await page.route("**/api/transcript?*", async route => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true, video_id: "analysis1", video_title: "Analysis",
+        language: "English", language_code: "en", is_generated: false,
+        segmentation_version: "e2e-v1",
+        items: [{text: "I can run the program.", start: 0, end: 2, duration: 2}]
+      })
+    });
+  });
+  let calls = 0;
+  await page.route("**/api/sentence-analysis", async route => {
+    calls += 1;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true, analysis: "【句意】我能运行程序。\\n【句子结构】主谓宾\\n【易混词义】run：运行，不是奔跑",
+        model: "e2e", cached: false
+      })
+    });
+  });
+
+  await page.goto("/");
+  await page.locator("#url").fill("https://youtu.be/analysis1");
+  await page.getByRole("button", { name: "获取字幕并开始" }).click();
+  await expect(page.locator("#analyzeSentence")).toBeDisabled();
+  await page.locator("#answer").fill("I can run the program");
+  await page.locator("#answer").press("Enter");
+  await expect(page.locator("#feedback")).toContainText("全部正确");
+  await expect(page.locator("#analyzeSentence")).toBeEnabled();
+  await page.locator("#analyzeSentence").click();
+  await expect(page.locator("#sentenceAnalysis")).toContainText("run：运行，不是奔跑");
+  await page.locator("#analyzeSentence").click();
+  expect(calls).toBe(1);
+});
+
 test("new household pages load", async ({ page }) => {
   await mockYouTube(page);
 
