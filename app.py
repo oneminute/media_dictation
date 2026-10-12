@@ -33,6 +33,8 @@ from media_service import (
 )
 from llm_service import (
     SENTENCE_PROMPT_VERSION,
+    ANALYSIS_PROMPT_VERSION,
+    analyze_english_sentence,
     WORD_PROMPT_VERSION,
     cache_candidates,
     generate_learning_summary,
@@ -1356,6 +1358,53 @@ def translate():
         )
     except Exception as exc:
         return jsonify({"ok": False, "error": f"翻译失败：{exc}"}), 500
+
+
+@app.post("/api/sentence-analysis")
+def sentence_analysis():
+    payload = request.get_json(silent=True) or {}
+    source_text = str(payload.get("text", "")).strip()
+    if not source_text or len(source_text) > 2000:
+        return jsonify({"ok": False, "error": "句子为空或超过 2000 字符。"}), 400
+
+    provider_override = payload.get("provider")
+    try:
+        for provider, model in cache_candidates(
+            word=False, provider_override=provider_override,
+        ):
+            cached = get_translation(
+                source_text,
+                provider=provider,
+                model=model,
+                prompt_version=ANALYSIS_PROMPT_VERSION,
+            )
+            if cached is not None:
+                label = f"ollama:{model}" if provider == "ollama" else model
+                return jsonify({
+                    "ok": True,
+                    "analysis": cached["translation"],
+                    "model": label,
+                    "cached": True,
+                })
+
+        result, model_label, tier = analyze_english_sentence(
+            source_text, provider_override=provider_override,
+        )
+        provider, raw_model = result_identity(model_label)
+        save_translation(
+            source_text=source_text,
+            translation=result,
+            model=raw_model,
+            provider=provider,
+            service_tier=tier,
+            prompt_version=ANALYSIS_PROMPT_VERSION,
+        )
+        return jsonify({
+            "ok": True, "analysis": result,
+            "model": model_label, "cached": False,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"句子分析失败：{exc}"}), 500
 
 
 @app.get("/api/transcript")
