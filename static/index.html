@@ -1158,6 +1158,7 @@ async function loadVideo(options) {
   }
 
   status.textContent = "正在读取字幕…";
+  renderContentAnalysis(null, null);
 
   try {
     const response = await fetch(
@@ -1268,6 +1269,7 @@ async function loadLocalMedia() {
 
   button.disabled = true;
   button.textContent = "正在提交…";
+  renderContentAnalysis(null, null);
   status.textContent =
     "正在上传媒体。上传完成后 Whisper 会在后台转写，你可以看到实时进度。";
 
