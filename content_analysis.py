@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from statistics import median
 from typing import Any, Iterable
 
 ANALYSIS_VERSION = "content-v1"
@@ -212,6 +213,181 @@ def level_recommendation(resource_level: str, learner_level: str | None) -> dict
     if gap == 1:
         return {"fit": "challenge", "label": "有挑战", "detail": "比当前水平高一档，适合有意识地挑战。"}
     return {"fit": "hard", "label": "偏难", "detail": "建议先练较低一级的材料，再回来挑战。"}
+
+
+def rank_resources_for_next_practice(
+    resources: Iterable[dict[str, Any]],
+    learner_level: str | None,
+    sessions: Iterable[dict[str, Any]] | None = None,
+    *,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Rank saved resources for the learner's next listening practice.
+
+    The score is intentionally explainable and deterministic. It favors
+    unfinished work, level fit, novelty, a practical session length, and
+    higher-confidence content analysis. It does not call an LLM.
+    """
+
+    resource_list = [dict(item) for item in resources]
+    if not resource_list:
+        return []
+
+    history: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for raw in sessions or []:
+        session = dict(raw)
+        key = (
+            str(session.get("source_type") or "youtube").lower(),
+            str(session.get("video_id") or ""),
+        )
+        history.setdefault(key, []).append(session)
+
+    normalized_learner = str(learner_level or "").upper()
+    learner_index = _LEVEL_ORDER.get(normalized_learner)
+    difficulty_values = [
+        float((item.get("analysis") or {}).get("difficulty_score")
+              or item.get("difficulty_score")
+              or 0)
+        for item in resource_list
+    ]
+    middle_difficulty = median(difficulty_values) if difficulty_values else 50.0
+
+    ranked: list[dict[str, Any]] = []
+    for item in resource_list:
+        analysis = dict(item.get("analysis") or {})
+        resource_level = str(
+            analysis.get("cefr_level") or item.get("cefr_level") or ""
+        ).upper()
+        resource_index = _LEVEL_ORDER.get(resource_level)
+        fit = level_recommendation(resource_level, normalized_learner)
+
+        score = 0.0
+        reasons: list[str] = []
+
+        if learner_index is not None and resource_index is not None:
+            gap = resource_index - learner_index
+            if gap == 0:
+                score += 40
+                reasons.append(f"与当前 {normalized_learner} 水平匹配。")
+            elif gap == 1:
+                score += 31
+                reasons.append(
+                    f"比当前 {normalized_learner} 高一档，适合作为挑战。"
+                )
+            elif gap == -1:
+                score += 23
+                reasons.append("比当前水平低一档，适合巩固和提高流利度。")
+            elif gap <= -2:
+                score += 8
+                reasons.append("材料明显偏容易，优先级较低。")
+            else:
+                score -= 25
+                reasons.append("材料高出当前水平两档以上，暂时不优先。")
+        else:
+            difficulty = float(
+                analysis.get("difficulty_score")
+                or item.get("difficulty_score")
+                or 0
+            )
+            score += max(
+                5.0,
+                30.0 - min(25.0, abs(difficulty - middle_difficulty) * 0.8),
+            )
+            reasons.append("尚未完成水平评估，先从资源库中等难度材料开始。")
+
+        key = (
+            str(item.get("source_type") or "youtube").lower(),
+            str(item.get("source_id") or ""),
+        )
+        resource_sessions = history.get(key, [])
+        latest = resource_sessions[0] if resource_sessions else None
+        session_count = max(
+            int(item.get("session_count") or 0),
+            len(resource_sessions),
+        )
+        next_action = "new"
+        resume_session_id = None
+
+        if latest and not bool(latest.get("completed")):
+            progress = float(latest.get("progress_percent") or 0)
+            score += 65
+            next_action = "resume"
+            resume_session_id = latest.get("id")
+            reasons.insert(
+                0,
+                f"上次练到 {progress:.0f}%，优先继续完成，保持学习连续性。",
+            )
+        elif session_count == 0:
+            score += 30
+            reasons.append("这份材料还没练过，优先增加新的听力输入。")
+        elif session_count == 1:
+            score += 10
+            reasons.append("只练过一次，仍有复习价值。")
+        else:
+            score -= min(24, (session_count - 1) * 6)
+
+        if latest and bool(latest.get("completed")):
+            total_items = max(1, int(latest.get("total_items") or 0))
+            error_count = max(0, int(latest.get("error_count") or 0))
+            errors_per_item = error_count / total_items
+            if errors_per_item >= 0.5:
+                score += 10
+                reasons.append("上次错误较多，再练一次有巩固价值。")
+            elif errors_per_item <= 0.1 and session_count >= 1:
+                score -= 8
+
+        confidence = str(analysis.get("confidence") or "").lower()
+        if confidence == "high":
+            score += 8
+        elif confidence == "medium":
+            score += 4
+        elif confidence == "low":
+            score -= 4
+
+        duration = float(analysis.get("duration") or item.get("duration") or 0)
+        if 240 <= duration <= 1200:
+            score += 10
+            reasons.append(
+                f"约 {format_duration(duration)}，适合一次完整听写练习。"
+            )
+        elif 120 <= duration <= 1800:
+            score += 5
+        elif duration and duration < 60:
+            score -= 6
+        elif duration > 2700:
+            score -= 7
+
+        word_count = int(
+            analysis.get("word_count") or item.get("word_count") or 0
+        )
+        if word_count >= 300:
+            score += 4
+        elif word_count and word_count < 100:
+            score -= 8
+
+        if bool(item.get("is_generated")):
+            score -= 2
+
+        ranked.append(
+            {
+                **item,
+                "recommendation": fit,
+                "recommendation_score": round(score, 1),
+                "recommendation_reasons": reasons[:4],
+                "next_action": next_action,
+                "resume_session_id": resume_session_id,
+            }
+        )
+
+    ranked.sort(
+        key=lambda item: (
+            float(item.get("recommendation_score") or 0),
+            -int(item.get("session_count") or 0),
+            float((item.get("analysis") or {}).get("word_count") or 0),
+        ),
+        reverse=True,
+    )
+    return ranked[: max(1, min(int(limit), 10))]
 
 
 def format_duration(seconds: float) -> str:
