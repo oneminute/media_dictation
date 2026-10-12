@@ -105,6 +105,12 @@ YouTube/local source, and title/link search. A saved YouTube resource can be
 opened directly as a new dictation session; local resources reopen their saved
 Whisper transcript.
 
+The top of the resource library also shows a deterministic **next-practice recommendation**.
+It prioritizes unfinished sessions first, then level fit, new material, practical
+session length, and higher-confidence analysis. Up to three candidates are returned,
+and the UI can cycle through alternatives. This recommendation is local and does
+not call an LLM.
+
 ### Local media + background Whisper
 
 Local media is optional and does not change the normal YouTube path.
