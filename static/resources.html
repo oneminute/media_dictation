@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学习资源库 · Media Dictation</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--border:#e4e7ec;--primary:#2563eb;--ok:#067647;--warn:#b54708;--bad:#b42318}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+.wrap{max-width:1120px;margin:0 auto;padding:28px 18px 60px}
+.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
+h1{margin:0;font-size:30px}.sub{color:var(--muted);margin-top:5px}
+.toolbar,.filters,.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+select,input,button,.button{border:1px solid #cfd4dc;background:#fff;border-radius:9px;padding:9px 11px;font-size:14px;color:var(--text);text-decoration:none}
+button,.button{cursor:pointer}.primary{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:700}
+.filters input{min-width:260px;flex:1}
+.resource{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:start}
+.title{font-size:18px;font-weight:760;line-height:1.35}
+.badges{display:flex;gap:7px;flex-wrap:wrap;margin:9px 0}
+.badge{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;background:#f8fafc}
+.level{font-weight:800;color:#1d4ed8;background:#eff6ff;border-color:#bfdbfe}
+.meta,.reason,.fit{font-size:13px;color:var(--muted);line-height:1.55}
+.fit{margin-top:7px}.fit.good{color:var(--ok)}.fit.challenge{color:var(--warn)}.fit.hard{color:var(--bad)}
+.reason{margin-top:7px}.empty{text-align:center;color:var(--muted);padding:36px}
+.summary{font-size:14px;color:var(--muted)}.summary strong{color:var(--text)}
+@media(max-width:760px){.header{align-items:flex-start;flex-direction:column}.resource{grid-template-columns:1fr}.actions{justify-content:flex-start}.filters input{min-width:100%}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1>学习资源库</h1>
+      <div class="sub">自动保存已分析的 YouTube 和本地媒体，按内容难度选择下一份练习。</div>
+    </div>
+    <div class="toolbar">
+      <select id="learnerSelect"></select>
+      <a class="button" href="/assessment">水平评估</a>
+      <a class="button" href="/library">媒体库</a>
+      <a class="button primary" href="/">返回听写</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="filters">
+      <select id="levelFilter">
+        <option value="">全部难度</option>
+        <option value="A2">A2</option>
+        <option value="B1">B1</option>
+        <option value="B2">B2</option>
+        <option value="C1">C1</option>
+      </select>
+      <select id="sourceFilter">
+        <option value="">全部来源</option>
+        <option value="youtube">YouTube</option>
+        <option value="local">本地媒体</option>
+      </select>
+      <input id="search" placeholder="搜索标题或链接">
+      <button id="refresh">刷新</button>
+    </div>
+    <div id="summary" class="summary" style="margin-top:10px"></div>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+let activeLearnerId=Number(localStorage.getItem("mediaDictationLearnerId")||0);
+
+function fmtDuration(sec){
+  sec=Math.max(0,Math.round(Number(sec||0)));
+  const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;
+  return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(s).padStart(2,"0");
+}
+function esc(s){
+  return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+}
+async function loadLearners(){
+  const r=await fetch("/api/learners"),d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||"无法读取学习者");
+  const sel=document.getElementById("learnerSelect");sel.textContent="";
+  (d.learners||[]).forEach(x=>{const o=document.createElement("option");o.value=x.id;o.textContent=x.name;sel.appendChild(o)});
+  if(!activeLearnerId)activeLearnerId=Number(d.default_learner_id||0);
+  sel.value=String(activeLearnerId);
+}
+function startHref(item){
+  if(item.source_type==="local")return "/?media="+encodeURIComponent(item.source_id);
+  return "/?url="+encodeURIComponent(item.source_url||("https://www.youtube.com/watch?v="+item.source_id));
+}
+function render(items,learnerLevel){
+  const host=document.getElementById("list");host.textContent="";
+  document.getElementById("summary").innerHTML=
+    "当前水平：<strong>"+esc(learnerLevel||"未评估")+"</strong> · 已找到 <strong>"+String((items||[]).length)+"</strong> 份材料。"+
+    (!learnerLevel?" 先做一次水平评估后，系统会显示每份材料的匹配度。":"");
+  if(!items||!items.length){host.innerHTML='<div class="card empty">还没有符合条件的资源。先在首页载入一个 YouTube 视频或完成一次本地 Whisper 转写。</div>';return}
+  items.forEach(item=>{
+    const a=item.analysis||{},fit=item.recommendation||{};
+    const card=document.createElement("div");card.className="card resource";
+    const left=document.createElement("div");
+    const reasons=(a.reasons||[]).slice(0,2).map(x=>esc(x)).join(" ");
+    left.innerHTML=
+      '<div class="title">'+esc(item.title||item.source_id)+'</div>'+
+      '<div class="badges">'+
+        '<span class="badge level">'+esc(a.cefr_level||item.cefr_level||"?")+'</span>'+
+        '<span class="badge">'+esc(item.source_type==="local"?"本地媒体":"YouTube")+'</span>'+
+        '<span class="badge">难度 '+Number(a.difficulty_score||item.difficulty_score||0).toFixed(0)+'/100</span>'+
+        '<span class="badge">'+esc(a.confidence||"")+" 置信度</span>'+
+      '</div>'+
+      '<div class="meta">'+
+        fmtDuration(a.duration||item.duration)+' · '+
+        Number(a.wpm||item.wpm||0).toFixed(0)+' WPM · '+
+        Number(a.word_count||item.word_count||0)+' 词 · 平均 '+
+        Number(a.avg_phrase_words||0).toFixed(1)+' 词/片段 · 已练 '+Number(item.session_count||0)+' 次'+
+      '</div>'+
+      '<div class="fit '+esc(fit.fit||"")+'"><strong>'+esc(fit.label||"")+'</strong> '+esc(fit.detail||"")+'</div>'+
+      '<div class="reason">'+reasons+'</div>';
+    const actions=document.createElement("div");actions.className="actions";
+    const start=document.createElement("a");start.className="button primary";start.href=startHref(item);start.textContent="开始练习";actions.appendChild(start);
+    if(item.source_type==="youtube"&&item.source_url){
+      const open=document.createElement("a");open.className="button";open.href=item.source_url;open.target="_blank";open.rel="noopener";open.textContent="打开原视频";actions.appendChild(open);
+    }
+    card.append(left,actions);host.appendChild(card);
+  });
+}
+async function load(){
+  const q=new URLSearchParams({learner_id:String(activeLearnerId)});
+  const level=document.getElementById("levelFilter").value;
+  const source=document.getElementById("sourceFilter").value;
+  const search=document.getElementById("search").value.trim();
+  if(level)q.set("level",level);if(source)q.set("source_type",source);if(search)q.set("q",search);
+  const r=await fetch("/api/resources?"+q.toString()),d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||"资源库读取失败");
+  render(d.items||[],d.learner_level||"");
+}
+let searchTimer=null;
+document.getElementById("learnerSelect").addEventListener("change",async function(){
+  activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));await load();
+});
+document.getElementById("levelFilter").addEventListener("change",()=>load().catch(e=>alert(e.message||e)));
+document.getElementById("sourceFilter").addEventListener("change",()=>load().catch(e=>alert(e.message||e)));
+document.getElementById("refresh").addEventListener("click",()=>load().catch(e=>alert(e.message||e)));
+document.getElementById("search").addEventListener("input",function(){clearTimeout(searchTimer);searchTimer=setTimeout(()=>load().catch(e=>alert(e.message||e)),250)});
+(async function(){try{await loadLearners();await load()}catch(e){document.getElementById("list").innerHTML='<div class="card empty">'+esc(e.message||e)+'</div>'}})();
+</script>
+</body>
+</html>
