@@ -236,10 +236,43 @@ async function reviewWord(id,rating){
   const d=await r.json();if(!r.ok||!d.ok){alert(d.error||"复习记录失败");return}await loadDashboard();
 }
 
+const vocabularyPageSize=5;
+const vocabularyVisibleCount={vocabulary:5,dueVocabulary:5};
+
 function renderVocabulary(id,items,withReview){
   const host=document.getElementById(id);host.textContent="";
   if(!items||!items.length){host.innerHTML='<div class="empty">暂无项目。</div>';return}
-  items.forEach(x=>host.appendChild(vocabNode(x,withReview)));
+  const visible=Math.min(items.length,vocabularyVisibleCount[id]||vocabularyPageSize);
+  items.slice(0,visible).forEach(x=>host.appendChild(vocabNode(x,withReview)));
+
+  if(items.length>vocabularyPageSize){
+    const footer=document.createElement("div");
+    footer.className="row";
+    footer.style.cssText="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px";
+    const count=document.createElement("span");
+    count.className="small";
+    count.textContent="已显示 "+visible+" / "+items.length+" 条";
+    footer.appendChild(count);
+    if(visible<items.length){
+      const more=document.createElement("button");
+      more.textContent="再显示 "+Math.min(vocabularyPageSize,items.length-visible)+" 条";
+      more.addEventListener("click",()=>{
+        vocabularyVisibleCount[id]=visible+vocabularyPageSize;
+        renderVocabulary(id,items,withReview);
+      });
+      footer.appendChild(more);
+    }
+    if(visible>vocabularyPageSize){
+      const less=document.createElement("button");
+      less.textContent="收起";
+      less.addEventListener("click",()=>{
+        vocabularyVisibleCount[id]=vocabularyPageSize;
+        renderVocabulary(id,items,withReview);
+      });
+      footer.appendChild(less);
+    }
+    host.appendChild(footer);
+  }
 }
 
 function renderSessions(items){
@@ -350,6 +383,8 @@ async function importData(file){
 
 document.getElementById("learnerSelect").addEventListener("change",async function(){
   activeLearnerId=Number(this.value||0);localStorage.setItem("mediaDictationLearnerId",String(activeLearnerId));
+  vocabularyVisibleCount.vocabulary=vocabularyPageSize;
+  vocabularyVisibleCount.dueVocabulary=vocabularyPageSize;
   try{await loadDashboard()}catch(e){alert(String(e.message||e))}
 });
 document.getElementById("addLearner").addEventListener("click",addLearner);
