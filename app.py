@@ -17,7 +17,11 @@ from assessment_service import (
     score_answer,
     summarize_responses,
 )
-from content_analysis import analyze_transcript, level_recommendation
+from content_analysis import (
+    analyze_transcript,
+    level_recommendation,
+    rank_resources_for_next_practice,
+)
 from job_service import enqueue_transcription
 from media_service import (
     max_upload_bytes,
@@ -435,6 +439,32 @@ def resource_list():
         )
     except Exception as exc:
         return jsonify({"ok": False, "error": f"资源库读取失败：{exc}"}), 400
+
+
+@app.get("/api/resources/recommendations")
+def resource_recommendations():
+    learner_id = request_learner_id()
+    try:
+        learner_level = _latest_learner_level(learner_id)
+        resources = list_content_resources(learner_id, limit=500)
+        sessions = get_session_history(limit=200, learner_id=learner_id)
+        items = rank_resources_for_next_practice(
+            resources,
+            learner_level,
+            sessions,
+            limit=int(request.args.get("limit", "3")),
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "learner_level": learner_level,
+                "items": items,
+            }
+        )
+    except Exception as exc:
+        return jsonify(
+            {"ok": False, "error": f"生成下一条练习推荐失败：{exc}"}
+        ), 400
 
 
 @app.get("/media/<media_id>")
