@@ -81,12 +81,16 @@ def align_caption_to_whisper(caption_items, timed_words):
     return merge_caption_fragments(units)
 
 
-def revise_youtube(video_id: str):
+def revise_youtube(video_id: str, progress_callback=None):
+    def report(p, stage, detail):
+        if progress_callback:
+            progress_callback(p, stage, detail)
     cached = get_revision(video_id)
     if cached is not None:
         return cached, True
     if not whisper_available():
         raise RuntimeError("Whisper 未安装，请先运行 setup_whisper_windows.bat。")
+    report(3, 'downloading', '正在下载视频音频')
     with tempfile.TemporaryDirectory(prefix="media-dictation-yt-") as directory:
         output = str(Path(directory) / "audio.%(ext)s")
         url = "https://www.youtube.com/watch?v=" + video_id
@@ -101,7 +105,9 @@ def revise_youtube(video_id: str):
         candidates = [p for p in Path(directory).glob("audio.*") if p.is_file()]
         if not candidates:
             raise RuntimeError("未找到下载后的音频文件。")
-        result = transcribe_media(candidates[0], include_words=True)
+        report(15, 'loading_model', '正在加载 Whisper 模型')
+        result = transcribe_media(candidates[0], include_words=True, progress_callback=lambda p, stage, detail: report(15 + int(p * 0.75), stage, detail))
+    report(91, 'aligning', '正在重新对齐字幕')
     aligned_items = None
     caption_source = None
     try:
@@ -122,6 +128,7 @@ def revise_youtube(video_id: str):
         "segmentation_version": REVISION_VERSION,
         "revision": True,
     }
+    report(97, 'saving', '正在保存数据库')
     with connect() as conn:
         _ensure_table(conn)
         conn.execute(
