@@ -275,11 +275,20 @@ button.warn{background:#fef3c7;color:#92400e}
         <button id="next">下一句 →</button>
         <button id="show" class="warn">显示/隐藏原文</button>
         <button id="translate">中文翻译</button>
-        <button id="analyzeSentence" disabled>分析当前句</button>
+        <button id="analyzeSentence" disabled>分析当前句</button><button id="sentenceLadderBtn" type="button">增强练习</button>
       </div>
 
       <div id="translation" class="translation-box"></div>
       <div id="sentenceAnalysis" class="translation-box" style="white-space:pre-wrap"></div>
+      <div id="sentenceLadderPanel" class="card" style="display:none;margin-top:12px">
+        <strong id="ladderTitle">句子扩展训练</strong>
+        <div id="ladderStatus" class="status"></div>
+        <div class="row"><button id="ladderSpeak">▶ 播放本轮</button><button id="ladderReveal">显示答案</button></div>
+        <div id="ladderExpected" style="display:none;padding:8px"></div>
+        <input id="ladderInput" type="text" autocomplete="off" placeholder="默写当前层级" style="width:100%;margin:8px 0">
+        <div class="row"><button id="ladderCheck">检查</button><button id="ladderNext" disabled>下一层</button><button id="ladderClose">结束</button></div>
+        <div id="ladderFeedback" class="status"></div>
+      </div>
 
       <div class="answer-label">
         <span>你的听写</span>
