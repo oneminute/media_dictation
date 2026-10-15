@@ -50,7 +50,8 @@ from llm_service import (
     translate_word_in_context,
     unload_configured_ollama_models,
 )
-from youtube_revision_service import get_revision, revise_youtube
+from youtube_revision_service import get_revision
+from youtube_revision_jobs import submit as submit_youtube_revision, get_job as get_youtube_revision_job, latest_job as latest_youtube_revision_job
 from transcript_service import (
     SEGMENTATION_VERSION,
     build_youtube_api,
@@ -1413,22 +1414,25 @@ def revise_transcript():
     payload = request.get_json(silent=True) or {}
     video_id = extract_video_id(str(payload.get("url") or payload.get("video_id") or ""))
     if not video_id:
-        return jsonify({"ok": False, "error": "无效的 YouTube 视频链接。"}), 400
-    try:
-        revised, cached = revise_youtube(video_id)
-        title = fetch_video_title(video_id)
-        analysis = analyze_transcript(revised["items"])
-        return jsonify({
-            "ok": True, "video_id": video_id, "video_title": title,
-            "source_type": "youtube", "cached": cached,
-            "analysis": analysis,
-            "recommendation": level_recommendation(
-                analysis.get("cefr_level"), _latest_learner_level(request_learner_id())
-            ),
-            **revised,
-        })
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "无效的 YouTube 链接。"}), 400
+    job = submit_youtube_revision(video_id)
+    return jsonify({"ok": True, "job": job}), 200 if job.get("cached") else 202
+
+
+@app.get("/api/transcript/revise/jobs/<job_id>")
+def youtube_revision_job_status(job_id):
+    job = get_youtube_revision_job(job_id)
+    if job is None:
+        return jsonify({"ok": False, "error": "找不到修订任务。"}), 404
+    return jsonify({"ok": True, "job": job})
+
+
+@app.get("/api/transcript/revise/current")
+def youtube_revision_current():
+    video_id = extract_video_id(request.args.get("url", ""))
+    if not video_id:
+        return jsonify({"ok": False, "error": "无效的 YouTube 链接。"}), 400
+    return jsonify({"ok": True, "job": latest_youtube_revision_job(video_id)})
 
 
 @app.get("/api/transcript")
