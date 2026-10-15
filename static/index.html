@@ -676,6 +676,7 @@ function focusAnswer() {
 }
 
 function resetForSentence() {
+  closeLadder();
   sentenceStartedAt = Date.now();
   document.getElementById("answer").value = "";
   document.getElementById("feedback").innerHTML = "";
