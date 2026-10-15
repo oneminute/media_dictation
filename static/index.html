@@ -225,6 +225,7 @@ button.warn{background:#fef3c7;color:#92400e}
     <div class="url-row">
       <input id="url" type="text" placeholder="YouTube / YouTube Music Podcast 链接" autocomplete="off">
       <button id="load" class="primary">获取字幕并开始</button>
+      <button id="reviseYouTube" type="button" title="使用 Whisper 重新识别音频并保存修订字幕到数据库">重新修订字幕</button>
     </div>
     <div class="source-divider">或者使用本地媒体</div>
     <div class="file-row">
@@ -1227,6 +1228,36 @@ async function startPracticeSession(sourceUrl, transcriptData) {
   }
 }
 
+async function reviseYouTubeTranscript() {
+  const url = document.getElementById("url").value.trim();
+  const status = document.getElementById("status");
+  const button = document.getElementById("reviseYouTube");
+  if (!url) {
+    status.textContent = "请先输入 YouTube 链接。";
+    return;
+  }
+  if (!window.confirm("将使用 Whisper 分析视频音频并重新标定字幕。首次处理可能较慢，完成后将持久保存到数据库，以后打开直接使用。是否继续？")) return;
+  button.disabled = true;
+  status.textContent = "正在重新识别音频并标定句子，请保持页面打开…";
+  try {
+    const response = await fetch("/api/transcript/revise", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({url, learner_id: activeLearnerId})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "修订失败。");
+    await loadVideo();
+    status.textContent = data.cached
+      ? "已从数据库加载修订字幕，无需重复处理。"
+      : "字幕已重新修订并保存到数据库，后续会自动复用。";
+  } catch (error) {
+    status.textContent = "修订失败，原字幕未被覆盖：" + String(error.message || error);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadVideo(options) {
   options = options || {};
   const url = document.getElementById("url").value.trim();
@@ -1546,6 +1577,7 @@ document.getElementById("addLearner").addEventListener("click", addLearner);
 document.getElementById("load").addEventListener("click", function () {
   loadVideo();
 });
+document.getElementById("reviseYouTube").addEventListener("click", reviseYouTubeTranscript);
 document.getElementById("loadMedia").addEventListener("click", loadLocalMedia);
 document.getElementById("play").addEventListener("click", playCurrent);
 document.getElementById("prev").addEventListener("click", function () {
