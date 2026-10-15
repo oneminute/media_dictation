@@ -50,6 +50,7 @@ from llm_service import (
     translate_word_in_context,
     unload_configured_ollama_models,
 )
+from sentence_ladder import build_ladder, PROMPT_VERSION as LADDER_VERSION
 from youtube_revision_service import get_revision
 from youtube_revision_jobs import submit as submit_youtube_revision, get_job as get_youtube_revision_job, latest_job as latest_youtube_revision_job
 from transcript_service import (
@@ -1360,6 +1361,31 @@ def translate():
         )
     except Exception as exc:
         return jsonify({"ok": False, "error": f"翻译失败：{exc}"}), 500
+
+
+@app.post("/api/sentence-ladder")
+def sentence_ladder():
+    payload = request.get_json(silent=True) or {}
+    source = str(payload.get("text", "")).strip()
+    if not source or len(source) > 1200:
+        return jsonify({"ok": False, "error": "请选择有效的英文句子。"}), 400
+    provider_override = payload.get("provider")
+    try:
+        for provider, model in cache_candidates(word=False, provider_override=provider_override):
+            cached = get_translation(source, provider=provider, model=model, prompt_version=LADDER_VERSION)
+            if cached:
+                import json
+                data = json.loads(cached["translation"])
+                return jsonify({"ok": True, "cached": True, **data})
+        import json
+        result = build_ladder(source, provider_override=provider_override)
+        provider, model = result_identity(result["model"])
+        save_translation(source_text=source, translation=json.dumps(result, ensure_ascii=False),
+                         model=model, provider=provider, service_tier="standard",
+                         prompt_version=LADDER_VERSION)
+        return jsonify({"ok": True, "cached": False, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"生成增强练习失败：{exc}"}), 500
 
 
 @app.post("/api/sentence-analysis")
