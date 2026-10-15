@@ -1485,6 +1485,19 @@ def transcript():
             or "requestblocked" in message.lower()
             or "ipblocked" in message.lower()
         )
+        no_captions = (
+            "notranscriptfound" in message.lower()
+            or "transcriptsdisabled" in message.lower()
+            or "no transcript is available" in message.lower()
+            or "no usable spoken captions" in message.lower()
+        )
+        if no_captions and not blocked:
+            return jsonify({
+                "ok": False,
+                "error": "该视频没有可用的 YouTube 字幕，可以直接使用本地 Whisper 生成字幕。",
+                "can_generate_with_whisper": True,
+                "video_id": video_id,
+            }), 404
         if blocked:
             error = (
                 "YouTube 已阻止当前服务器 IP。视频本身可能有字幕；"
