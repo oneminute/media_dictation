@@ -165,6 +165,7 @@ def _device_candidates() -> list[tuple[str, str]]:
 def transcribe_media(
     path: Path,
     progress_callback=None,
+    include_words: bool = False,
 ) -> dict[str, Any]:
     try:
         from faster_whisper import WhisperModel
@@ -245,6 +246,8 @@ def transcribe_media(
                 "whisper_device": device,
                 "whisper_compute_type": compute_type,
             }
+            if include_words:
+                result["words"] = _word_units_from_segments(segment_list)
             report(100, "completed", "Transcription complete")
             return result
         except Exception as exc:
