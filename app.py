@@ -50,6 +50,7 @@ from llm_service import (
     translate_word_in_context,
     unload_configured_ollama_models,
 )
+from youtube_revision_service import get_revision, revise_youtube
 from transcript_service import (
     SEGMENTATION_VERSION,
     build_youtube_api,
@@ -1407,6 +1408,29 @@ def sentence_analysis():
         return jsonify({"ok": False, "error": f"句子分析失败：{exc}"}), 500
 
 
+@app.post("/api/transcript/revise")
+def revise_transcript():
+    payload = request.get_json(silent=True) or {}
+    video_id = extract_video_id(str(payload.get("url") or payload.get("video_id") or ""))
+    if not video_id:
+        return jsonify({"ok": False, "error": "无效的 YouTube 视频链接。"}), 400
+    try:
+        revised, cached = revise_youtube(video_id)
+        title = fetch_video_title(video_id)
+        analysis = analyze_transcript(revised["items"])
+        return jsonify({
+            "ok": True, "video_id": video_id, "video_title": title,
+            "source_type": "youtube", "cached": cached,
+            "analysis": analysis,
+            "recommendation": level_recommendation(
+                analysis.get("cefr_level"), _latest_learner_level(request_learner_id())
+            ),
+            **revised,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.get("/api/transcript")
 def transcript():
     value = request.args.get("url", "")
@@ -1417,7 +1441,9 @@ def transcript():
         ), 400
 
     try:
-        result = fetch_best_transcript(video_id)
+        result = get_revision(video_id)
+        if result is None:
+            result = fetch_best_transcript(video_id)
         if not result["items"]:
             raise RuntimeError("The transcript contains no usable spoken captions.")
         learner_id = request_learner_id()
@@ -1438,7 +1464,8 @@ def transcript():
                 "ok": True,
                 "video_id": video_id,
                 "video_title": video_title,
-                "segmentation_version": SEGMENTATION_VERSION,
+                "segmentation_version": result.get("segmentation_version", SEGMENTATION_VERSION),
+                "revised": bool(result.get("revision")),
                 "analysis": analysis,
                 "recommendation": level_recommendation(
                     analysis.get("cefr_level"),
