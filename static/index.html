@@ -1320,6 +1320,17 @@ async function loadVideo(options) {
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
+      if (data.can_generate_with_whisper) {
+        status.textContent = "";
+        const prompt = document.createElement("span");
+        prompt.textContent = data.error + " ";
+        const generate = document.createElement("button");
+        generate.type = "button";
+        generate.textContent = "使用 Whisper 生成字幕";
+        generate.addEventListener("click", reviseYouTubeTranscript);
+        status.append(prompt, generate);
+        return;
+      }
       throw new Error(data.error || "字幕读取失败。");
     }
 
