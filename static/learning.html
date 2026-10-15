@@ -278,7 +278,17 @@ function renderVocabulary(id,items,withReview){
 function renderSessions(items){
   const host=document.getElementById("sessions");host.textContent="";
   if(!items||!items.length){host.innerHTML='<div class="empty">还没有练习记录。</div>';return}
-  items.forEach(x=>{
+  const groups=new Map();
+  for(const item of items){
+    // Learner filtering already happens on the history endpoint.
+    const key=(item.source_type||"youtube")+":"+(item.source_type==="local"?(item.media_id||item.video_id):item.video_id);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(item);
+  }
+  for(const versions of groups.values()){
+    // API returns history in newest-update-first order.
+    versions.sort((a,b)=>String(b.updated_at||"").localeCompare(String(a.updated_at||""))||Number(b.id)-Number(a.id));
+    const x=versions[0];
     const row=document.createElement("div");row.className="session";
     let thumb;
     if((x.source_type||"youtube")==="local"){
@@ -291,9 +301,24 @@ function renderSessions(items){
     const meta=document.createElement("div");meta.className="meta";meta.textContent=x.completed_sentences+" / "+x.total_items+" 句 · "+x.error_count+" 次错误 · "+localDate(x.updated_at);
     const state=document.createElement("div");state.className=x.completed?"status-ok":"status-open";state.textContent=x.completed?"已完成":"未完成";
     info.append(title,p,meta,state);
-    const action=document.createElement("div");if(!x.completed){const a=document.createElement("a");a.className="button";a.href="/?resume="+encodeURIComponent(x.id);a.textContent="继续练习";action.appendChild(a)}
+    if(versions.length>1){
+      const details=document.createElement("details");
+      const summary=document.createElement("summary");summary.textContent="历史练习（"+versions.length+" 次）";details.appendChild(summary);
+      const list=document.createElement("div");list.style.padding="8px 0";
+      versions.forEach((v,i)=>{
+        const line=document.createElement("div");line.style.margin="6px 0";
+        const link=document.createElement("a");link.href="/?resume="+encodeURIComponent(v.id);
+        link.textContent=(i===0?"最近一次 · ":"") + localDate(v.updated_at)+" · "+v.completed_sentences+"/"+v.total_items+" 句 · "+v.error_count+" 次错误";
+        line.appendChild(link);list.appendChild(line);
+      });
+      details.appendChild(list);info.appendChild(details);
+    }
+    const action=document.createElement("div");
+    if(!x.completed){
+      const a=document.createElement("a");a.className="button";a.href="/?resume="+encodeURIComponent(x.id);a.textContent="继续练习";action.appendChild(a);
+    }
     row.append(thumb,info,action);host.appendChild(row);
-  });
+  }
 }
 
 async function loadDashboard(){
