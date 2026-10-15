@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import re
+from difflib import SequenceMatcher
 import subprocess
 import sys
 import tempfile
@@ -9,8 +11,9 @@ from pathlib import Path
 
 from media_service import transcribe_media, whisper_available
 from storage import connect
+from transcript_service import fetch_best_transcript, merge_caption_fragments
 
-REVISION_VERSION = "whisper-word-v1"
+REVISION_VERSION = "caption-align-v2"
 
 
 def _ensure_table(conn):
@@ -35,6 +38,49 @@ def get_revision(video_id: str):
     return json.loads(row["transcript_json"]) if row else None
 
 
+def _normalize(token: str) -> str:
+    return re.sub(r"[^a-z0-9']", "", token.lower().replace("’", "'"))
+
+
+def align_caption_to_whisper(caption_items, timed_words):
+    """Preserve captions only when enough monotonic audio word anchors agree."""
+    caption_tokens = []
+    for item_index, item in enumerate(caption_items):
+        for m in re.finditer(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)*", item["text"]):
+            caption_tokens.append((item_index, _normalize(m.group())))
+    if not caption_tokens or not timed_words:
+        return None
+    audio_tokens = [_normalize(word["text"]) for word in timed_words]
+    matcher = SequenceMatcher(None, [t for _, t in caption_tokens], audio_tokens, autojunk=False)
+    matched = {}
+    for block in matcher.get_matching_blocks():
+        for offset in range(block.size):
+            matched[block.a + offset] = block.b + offset
+    if len(matched) / len(caption_tokens) < 0.80:
+        return None
+    positions = {}
+    for i, (segment, _) in enumerate(caption_tokens):
+        positions.setdefault(segment, []).append(i)
+    units = []
+    for segment, item in enumerate(caption_items):
+        positions_here = positions.get(segment, [])
+        anchors = [matched[i] for i in positions_here if i in matched]
+        if not positions_here or len(anchors) / len(positions_here) < 0.70:
+            return None
+        if not any(i in matched for i in positions_here[:2]):
+            return None
+        if not any(i in matched for i in positions_here[-2:]):
+            return None
+        start = float(timed_words[min(anchors)]["start"])
+        end = float(timed_words[max(anchors)]["end"])
+        if end <= start or end - start > 45:
+            return None
+        units.append({"text": item["text"], "start": start, "end": end})
+    if any(units[i]["start"] < units[i - 1]["start"] for i in range(1, len(units))):
+        return None
+    return merge_caption_fragments(units)
+
+
 def revise_youtube(video_id: str):
     cached = get_revision(video_id)
     if cached is not None:
@@ -55,12 +101,24 @@ def revise_youtube(video_id: str):
         candidates = [p for p in Path(directory).glob("audio.*") if p.is_file()]
         if not candidates:
             raise RuntimeError("未找到下载后的音频文件。")
-        result = transcribe_media(candidates[0])
+        result = transcribe_media(candidates[0], include_words=True)
+    aligned_items = None
+    caption_source = None
+    try:
+        caption_source = fetch_best_transcript(video_id)
+        aligned_items = align_caption_to_whisper(
+            caption_source["items"], result.get("words", [])
+        )
+    except Exception:
+        pass
+
     payload = {
-        "items": result["items"],
+        "items": aligned_items or result["items"],
+        "alignment_method": "youtube-caption+whisper" if aligned_items else "whisper-only",
+        "alignment_fallback": aligned_items is None,
         "language": result.get("language", "en"),
         "duration": result.get("duration", 0),
-        "is_generated": True,
+        "is_generated": bool(caption_source.get("is_generated", True)) if aligned_items else True,
         "segmentation_version": REVISION_VERSION,
         "revision": True,
     }
