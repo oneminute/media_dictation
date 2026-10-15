@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import contextmanager
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -18,13 +20,23 @@ def database_path() -> Path:
     return path
 
 
-def connect() -> sqlite3.Connection:
+@contextmanager
+def connect() -> Iterator[sqlite3.Connection]:
+    """Transaction scope which always closes the SQLite file handle.
+
+    sqlite3.Connection.__exit__ commits or rolls back but does NOT close the
+    connection; Windows then prevents TemporaryDirectory cleanup in tests.
+    """
     conn = sqlite3.connect(database_path(), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 10000")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
