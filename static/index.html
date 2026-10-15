@@ -233,6 +233,7 @@ button.warn{background:#fef3c7;color:#92400e}
       <button id="loadMedia">Whisper 转写并开始</button>
     </div>
     <div class="source-note">本地媒体会上传到这台 Media Dictation 服务器并由本机 Whisper 转写；需要先运行 setup_whisper_windows.bat。</div>
+    <div id="revisionProgress" style="display:none; margin:10px 0" aria-live="polite"><progress id="revisionBar" max="100" value="0" style="width:100%"></progress><div id="revisionDetail">正在准备…</div></div>
     <div id="status" class="status">选择 YouTube 链接或本地媒体开始。载入后单按 Ctrl 重播当前句。</div>
     <div id="contentAnalysis" class="analysis-box"></div>
   </div>
@@ -1228,36 +1229,76 @@ async function startPracticeSession(sourceUrl, transcriptData) {
   }
 }
 
-async function reviseYouTubeTranscript() {
-  const url = document.getElementById("url").value.trim();
-  const status = document.getElementById("status");
-  const button = document.getElementById("reviseYouTube");
-  if (!url) {
-    status.textContent = "请先输入 YouTube 链接。";
-    return;
-  }
-  if (!window.confirm("将使用 Whisper 分析视频音频并重新标定字幕。首次处理可能较慢，完成后将持久保存到数据库，以后打开直接使用。是否继续？")) return;
+async function watchRevisionJob(job, url) {
+  const button = document.getElementById('reviseYouTube');
+  const status = document.getElementById('status');
+  const progress = document.getElementById('revisionProgress');
+  const bar = document.getElementById('revisionBar');
+  const detail = document.getElementById('revisionDetail');
+  progress.style.display = 'block';
   button.disabled = true;
-  status.textContent = "正在重新识别音频并标定句子，请保持页面打开…";
   try {
-    const response = await fetch("/api/transcript/revise", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({url, learner_id: activeLearnerId})
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || "修订失败。");
+    while (job && ['queued','running'].includes(job.status)) {
+      const percent = Math.max(0, Math.min(100, Number(job.progress || 0)));
+      bar.value = percent;
+      detail.textContent = percent + '% · ' + (job.detail || job.stage || '正在排队');
+      status.textContent = '正在重新修订字幕…';
+      await new Promise(resolve => window.setTimeout(resolve, 1200));
+      const response = await fetch('/api/transcript/revise/jobs/' + encodeURIComponent(job.id));
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || '无法查询进度');
+      job = data.job;
+    }
+    if (job.status === 'failed') throw new Error(job.error || '修订失败');
+    bar.value = 100;
+    detail.textContent = '100% · 已保存到数据库';
     await loadVideo();
-    status.textContent = data.cached
-      ? "已从数据库加载修订字幕，无需重复处理。"
-      : "字幕已重新修订并保存到数据库，后续会自动复用。";
+    status.textContent = '字幕修订完成，已持久保存。';
   } catch (error) {
-    status.textContent = "修订失败，原字幕未被覆盖：" + String(error.message || error);
+    status.textContent = '修订失败，原字幕未被覆盖：' + String(error.message || error);
+    detail.textContent = '失败 · ' + String(error.message || error);
   } finally {
     button.disabled = false;
   }
 }
 
+async function reviseYouTubeTranscript() {
+  const url = document.getElementById('url').value.trim();
+  const status = document.getElementById('status');
+  if (!url) { status.textContent = '请先输入 YouTube 链接。'; return; }
+  if (!window.confirm('使用 Whisper 重新标定字幕并保存到数据库？')) return;
+  const button = document.getElementById('reviseYouTube');
+  button.disabled = true;
+  status.textContent = '正在创建修订任务…';
+  try {
+    const response = await fetch('/api/transcript/revise', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url, learner_id:activeLearnerId})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || '创建任务失败');
+    if (data.job.cached) {
+      await loadVideo();
+      status.textContent = '修订字幕已存在，直接使用数据库缓存。';
+      return;
+    }
+    await watchRevisionJob(data.job, url);
+  } catch (error) {
+    status.textContent = '无法启动修订：' + String(error.message || error);
+  } finally { button.disabled = false; }
+}
+
+async function resumeRevisionProgress() {
+  const url = document.getElementById('url').value.trim();
+  if (!url) return;
+  try {
+    const response = await fetch('/api/transcript/revise/current?url=' + encodeURIComponent(url));
+    const data = await response.json();
+    if (response.ok && data.ok && data.job && ['queued','running'].includes(data.job.status)) {
+      await watchRevisionJob(data.job, url);
+    }
+  } catch (error) { console.warn('Revision status unavailable:', error); }
+}
 async function loadVideo(options) {
   options = options || {};
   const url = document.getElementById("url").value.trim();
@@ -1705,6 +1746,7 @@ async function bootstrap() {
     }
     await loadLearners();
     await resumeFromQuery();
+    if (document.getElementById("url").value.trim()) void resumeRevisionProgress();
   } catch (error) {
     document.getElementById("status").innerHTML =
       '<span class="error">' + String(error.message || error) + "</span>";
