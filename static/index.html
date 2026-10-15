@@ -1754,6 +1754,82 @@ window.addEventListener(
   true
 );
 
+
+let ladder = null, ladderStep = 0, ladderRequest = 0;
+function ladderNormalized(t) {
+  return String(t||"").toLowerCase().replace(/[^a-z0-9'’]+/g," ").replace(/’/g,"'").trim();
+}
+function showLadderStep() {
+  const step=ladder.steps[ladderStep];
+  document.getElementById("ladderTitle").textContent="增强练习 "+(ladderStep+1)+"/"+ladder.steps.length+" · "+step.label;
+  document.getElementById("ladderInput").value="";
+  document.getElementById("ladderNext").disabled=true;
+  document.getElementById("ladderNext").textContent=ladderStep===ladder.steps.length-1?"完成":"下一层";
+  document.getElementById("ladderExpected").textContent=step.text;
+  document.getElementById("ladderExpected").style.display="none";
+  document.getElementById("ladderStatus").textContent=ladderStep===ladder.steps.length-1?"完整句：播放原视频音频":"部分句：使用浏览器美音 TTS，非视频原声";
+  document.getElementById("ladderFeedback").textContent="";
+  document.getElementById("ladderInput").focus();
+}
+function closeLadder() {
+  ++ladderRequest;
+  ladder=null;
+  if(window.speechSynthesis)window.speechSynthesis.cancel();
+  document.getElementById("sentenceLadderPanel").style.display="none";
+}
+async function startLadder() {
+  if(!items.length)return;
+  const phrase=items[index].text, requestId=++ladderRequest;
+  ladder=null;
+  const panel=document.getElementById("sentenceLadderPanel");
+  panel.style.display="block";
+  document.getElementById("ladderStatus").textContent="正在生成分层练习…";
+  try {
+    const response=await fetch("/api/sentence-ladder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:phrase,provider:activeLlmProvider})});
+    const data=await response.json();
+    if(!response.ok||!data.ok)throw new Error(data.error||"生成失败");
+    if(requestId!==ladderRequest||!items.length||items[index].text!==phrase)return;
+    ladder=data;ladderStep=0;showLadderStep();
+  } catch(error) {
+    if(requestId===ladderRequest)document.getElementById("ladderStatus").textContent=String(error.message||error);
+  }
+}
+function speakLadder() {
+  if(!ladder)return;
+  if(ladderStep===ladder.steps.length-1){playCurrent();return;}
+  if(!window.speechSynthesis)return;
+  window.speechSynthesis.cancel();
+  const utterance=new SpeechSynthesisUtterance(ladder.steps[ladderStep].text);
+  utterance.lang="en-US";utterance.rate=0.85;
+  const voice=window.speechSynthesis.getVoices().find(v=>v.lang==="en-US");
+  if(voice)utterance.voice=voice;
+  window.speechSynthesis.speak(utterance);
+}
+function checkLadder() {
+  if(!ladder)return;
+  const expected=ladderNormalized(ladder.steps[ladderStep].text);
+  const actual=ladderNormalized(document.getElementById("ladderInput").value);
+  const correct=expected===actual;
+  document.getElementById("ladderFeedback").textContent=correct?"正确，可以进入下一层":"仍有遗漏，重新听写后再检查";
+  document.getElementById("ladderNext").disabled=!correct;
+}
+document.getElementById("sentenceLadderBtn").addEventListener("click",startLadder);
+document.getElementById("ladderClose").addEventListener("click",closeLadder);
+document.getElementById("ladderSpeak").addEventListener("click",speakLadder);
+document.getElementById("ladderCheck").addEventListener("click",checkLadder);
+document.getElementById("ladderReveal").addEventListener("click",()=>{
+  const element=document.getElementById("ladderExpected");
+  element.style.display=element.style.display==="none"?"block":"none";
+});
+document.getElementById("ladderNext").addEventListener("click",()=>{
+  if(!ladder)return;
+  if(ladderStep===ladder.steps.length-1){closeLadder();return;}
+  ladderStep++;showLadderStep();
+});
+document.getElementById("ladderInput").addEventListener("keydown",event=>{
+  if(event.key==="Enter"){event.preventDefault();event.stopPropagation();checkLadder();}
+});
+
 async function bootstrap() {
   try {
     mediaPlayer = document.getElementById("mediaPlayer");
