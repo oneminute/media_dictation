@@ -38,6 +38,30 @@ function page(fetch) {
 
 const response = job => ({ok: true, status: 200, json: async () => ({ok: true, job})});
 
+test('force button passes force=true and the selected provider', async () => {
+  let payload;
+  const p = page(async (url, options) => {
+    payload = JSON.parse(options.body);
+    return response({status: 'completed'});
+  });
+  p.run("activeLlmProvider = 'ollama'");
+  await p.run('reviseYouTubeTranscript(true)');
+  assert.equal(payload.force, true);
+  assert.equal(payload.provider, 'ollama');
+  assert.equal(p.get('forceReviseYouTube').disabled, false);
+});
+
+test('ordinary click event does not accidentally enable force', async () => {
+  let payload;
+  const p = page(async (url, options) => {
+    payload = JSON.parse(options.body);
+    return response({status: 'completed', cached: true});
+  });
+  await p.run('reviseYouTubeTranscript({type: "click"})');
+  assert.equal(payload.force, false);
+  assert.match(p.get('revisionDetail').textContent, /本次没有重新生成/);
+});
+
 test('progress is visible while creation is still waiting; cached result shows 100%', async () => {
   let release;
   const p = page(() => new Promise(resolve => { release = resolve; }));

@@ -15,8 +15,26 @@ and optional OpenAI fallback.
 - Or upload local MP3/WAV/M4A/MP4 and other common audio/video files for optional local Whisper transcription.
 - Prefer English captions when available.
 - Clean non-speech cues such as `[Music]`.
-- Segment captions into short listening phrases using punctuation, pauses,
-  clause boundaries, and safe caption boundaries.
+- Initial captions are joined using existing sentence-ending punctuation,
+  without cutting at word counts or pauses. Unpunctuated captions may remain long.
+- Use **重新修订** for Whisper word timing followed by AI semantic sentence
+  segmentation with the selected Ollama / OpenAI provider. The model selects
+  boundaries from the transcription; it cannot rewrite words or timestamps.
+- Semantic revision uses Whisper text rather than preserving YouTube caption
+  wording, so transcription accuracy still depends on Whisper.
+- A sentence can exceed 18 words. Long sentences belong in the progressive
+  sentence practice rather than being forcibly truncated.
+- Revisions and word timing are saved in SQLite. Old revisions remain readable;
+  click **重新修订** to upgrade them. Old practice-session snapshots retain their
+  original sentence indexes; reloading captions uses the upgraded transcript.
+- A failed semantic request reports an error and retains the old revision.
+  Its completed Whisper transcription is cached so retries avoid retranscription.
+  Semantic timeouts default to 90 seconds per model request; configure
+  `OLLAMA_SEGMENTATION_TIMEOUT_SECONDS` / `OPENAI_SEGMENTATION_TIMEOUT_SECONDS`.
+- **强制重新生成** skips both the completed revision and word-transcription
+  caches, runs Whisper and semantic segmentation again, and replaces the saved
+  result only on success. Ordinary revision reuses a current completed result;
+  the UI explicitly says when no regeneration occurred.
 - Play only the current phrase and pause at its saved end timestamp.
 - Hide source text by default.
 - Press **Ctrl** by itself to replay the current phrase.

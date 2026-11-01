@@ -11,12 +11,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 
-TARGET_WORDS = 10
-SOFT_MAX_WORDS = 14
-HARD_MAX_WORDS = 18
-MIN_PHRASE_WORDS = 4
-PAUSE_BREAK_SECONDS = 0.75
-SEGMENTATION_VERSION = "v3"
+SEGMENTATION_VERSION = "punctuation-v4"
 
 NON_SPEECH_CUES = (
     "music", "applause", "laughter", "laughing", "cheering",
@@ -25,21 +20,6 @@ NON_SPEECH_CUES = (
 
 WORD_RE = re.compile(r"\b[A-Za-z0-9]+(?:[’'][A-Za-z0-9]+)*\b")
 STRONG_END_RE = re.compile(r'[.!?…]["\'’”)]*$')
-WEAK_END_RE = re.compile(r'[,;:—-]["\'’”)]*$')
-
-UNSAFE_END_WORDS = {
-    "a","an","the","to","of","in","on","at","for","with","from","by","as",
-    "is","are","was","were","be","been","being","have","has","had","do",
-    "does","did","can","could","would","should","will","may","might","must",
-    "not","and","or","but","if","because","that","which","who","whose",
-    "than","then",
-}
-UNSAFE_START_WORDS = {"of","to","for","with","from","by","than","as","and","or"}
-CLAUSE_STARTERS = {
-    "but","so","because","although","though","however","then","meanwhile",
-    "while","when","if","since","therefore","instead","yet",
-}
-PRONOUN_STARTERS = {"i","you","we","they","he","she","it","there","this","that"}
 
 
 def extract_video_id(value: str) -> str:
@@ -156,72 +136,6 @@ def word_count(text: str) -> int:
     return len(words(text))
 
 
-def buffer_word_count(buffer: list[dict]) -> int:
-    return sum(word_count(item["text"]) for item in buffer)
-
-
-def starts_new_clause(text: str) -> bool:
-    tokens = words(text)[:2]
-    if not tokens:
-        return False
-    if tokens[0] in CLAUSE_STARTERS:
-        return True
-    return tokens[0] == "and" and len(tokens) > 1 and tokens[1] in PRONOUN_STARTERS
-
-
-def boundary_score(left: dict, right: dict, phrase_words: int) -> int:
-    left_text = left["text"]
-    right_text = right["text"]
-    if STRONG_END_RE.search(left_text):
-        return 1000
-
-    score = 0
-    if WEAK_END_RE.search(left_text):
-        score += 90
-
-    gap = max(0.0, right["start"] - left["end"])
-    if gap >= 1.0:
-        score += 95
-    elif gap >= 0.75:
-        score += 80
-    elif gap >= 0.5:
-        score += 55
-    elif gap >= 0.3:
-        score += 25
-
-    if starts_new_clause(right_text):
-        score += 45
-
-    left_words = words(left_text)
-    right_words = words(right_text)
-    if left_words and left_words[-1] in UNSAFE_END_WORDS:
-        score -= 120
-    if right_words and right_words[0] in UNSAFE_START_WORDS:
-        score -= 60
-
-    score += max(0, 28 - abs(phrase_words - TARGET_WORDS) * 4)
-    if phrase_words > SOFT_MAX_WORDS:
-        score -= (phrase_words - SOFT_MAX_WORDS) * 8
-    return score
-
-
-def choose_break(buffer: list[dict], force: bool = False):
-    running_words = 0
-    best = None
-    for index in range(len(buffer) - 1):
-        running_words += word_count(buffer[index]["text"])
-        if running_words < MIN_PHRASE_WORDS:
-            continue
-        if running_words > HARD_MAX_WORDS:
-            break
-        score = boundary_score(buffer[index], buffer[index + 1], running_words)
-        if best is None or score > best[0]:
-            best = (score, index + 1)
-    if best and (best[0] >= 45 or force):
-        return best[1]
-    return None
-
-
 def make_segment(units: list[dict]) -> dict:
     text = re.sub(r"\s+", " ", " ".join(item["text"] for item in units)).strip()
     start = units[0]["start"]
@@ -253,34 +167,13 @@ def merge_caption_fragments(snippets: list[dict]) -> list[dict]:
             if segment["text"]:
                 segments.append(segment)
 
-    def split_long_buffer(force: bool) -> None:
-        while len(buffer) > 1 and buffer_word_count(buffer) > SOFT_MAX_WORDS:
-            break_index = choose_break(
-                buffer,
-                force=force or buffer_word_count(buffer) >= HARD_MAX_WORDS,
-            )
-            if break_index is None:
-                return
-            emit(break_index)
-
-    for index, item in enumerate(clean):
+    # Preliminary captions only: no word-count or pause-based cuts. The opt-in
+    # revision pipeline performs semantic segmentation with word-level times.
+    for item in clean:
         buffer.append(item)
-        next_item = clean[index + 1] if index + 1 < len(clean) else None
-        split_long_buffer(force=False)
-
         if STRONG_END_RE.search(item["text"]):
-            split_long_buffer(force=True)
             emit()
-            continue
-
-        if next_item is not None:
-            gap = max(0.0, next_item["start"] - item["end"])
-            if gap >= PAUSE_BREAK_SECONDS and buffer_word_count(buffer) >= MIN_PHRASE_WORDS:
-                emit()
-
-    if buffer:
-        split_long_buffer(force=True)
-        emit()
+    emit()
 
     for index in range(len(segments) - 1):
         next_start = segments[index + 1]["start"]
