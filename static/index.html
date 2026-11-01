@@ -239,7 +239,11 @@ button.warn{background:#fef3c7;color:#92400e}
       <button id="loadMedia">Whisper 转写并开始</button>
     </div>
     <div class="source-note">本地媒体会上传到这台 Media Dictation 服务器并由本机 Whisper 转写；需要先运行 setup_whisper_windows.bat。</div>
-    <div id="revisionProgress" style="display:none; margin:10px 0" aria-live="polite"><progress id="revisionBar" max="100" value="0" style="width:100%"></progress><div id="revisionDetail">正在准备…</div></div>
+    <div id="revisionProgress" style="display:none; margin:10px 0" aria-live="polite" aria-busy="false">
+      <progress id="revisionBar" max="100" value="0" style="width:100%" aria-label="字幕修订进度"></progress>
+      <div id="revisionDetail">正在准备…</div>
+      <button id="refreshRevisionProgress" type="button" style="margin-top:6px">刷新进度</button>
+    </div>
     <div id="status" class="status">选择 YouTube 链接或本地媒体开始。载入后单按 Ctrl 重播当前句。</div>
     <div id="contentAnalysis" class="analysis-box"></div>
   </div>
@@ -1313,76 +1317,133 @@ async function startPracticeSession(sourceUrl, transcriptData) {
   }
 }
 
-async function watchRevisionJob(job, url) {
-  const button = document.getElementById('reviseYouTube');
-  const status = document.getElementById('status');
-  const progress = document.getElementById('revisionProgress');
+let revisionBusy = false;
+const REVISION_REQUEST_TIMEOUT_MS = 20000;
+
+function setRevisionBusy(busy) {
+  revisionBusy = busy;
+  document.getElementById('reviseYouTube').disabled = busy;
+  document.getElementById('refreshRevisionProgress').disabled = busy;
+  document.getElementById('revisionProgress').setAttribute('aria-busy', String(busy));
+}
+
+function showRevisionProgress(percent, message) {
+  document.getElementById('revisionProgress').style.display = 'block';
   const bar = document.getElementById('revisionBar');
-  const detail = document.getElementById('revisionDetail');
-  progress.style.display = 'block';
-  button.disabled = true;
+  if (percent === null) bar.removeAttribute('value');
+  else bar.value = Math.max(0, Math.min(100, Number(percent) || 0));
+  document.getElementById('revisionDetail').textContent = message;
+  document.getElementById('status').textContent = message;
+}
+
+function showRevisionError(error) {
+  const bar = document.getElementById('revisionBar');
+  if (!bar.hasAttribute('value')) bar.value = 0;
+  document.getElementById('revisionProgress').style.display = 'block';
+  const message = String(error.message || error) + ' 可点击“刷新进度”查询后台状态。';
+  document.getElementById('revisionDetail').textContent = message;
+  document.getElementById('status').textContent = message;
+}
+
+async function revisionRequest(url, options) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), REVISION_REQUEST_TIMEOUT_MS);
   try {
-    while (job && ['queued','running'].includes(job.status)) {
-      const percent = Math.max(0, Math.min(100, Number(job.progress || 0)));
-      bar.value = percent;
-      detail.textContent = percent + '% · ' + (job.detail || job.stage || '正在排队');
-      status.textContent = '正在重新修订字幕…';
-      await new Promise(resolve => window.setTimeout(resolve, 1200));
-      const response = await fetch('/api/transcript/revise/jobs/' + encodeURIComponent(job.id));
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || '无法查询进度');
-      job = data.job;
+    const response = await fetch(url, {...options, signal: controller.signal});
+    let data;
+    try { data = await response.json(); }
+    catch (error) {
+      if (controller.signal.aborted) throw error;
+      throw new Error('服务器响应无法读取（HTTP ' + response.status + '）。');
     }
-    if (job.status === 'failed') throw new Error(job.error || '修订失败');
-    bar.value = 100;
-    detail.textContent = '100% · 已保存到数据库';
-    await loadVideo();
-    status.textContent = '字幕修订完成，已持久保存。';
+    if (!response.ok || !data || !data.ok) {
+      throw new Error((data && data.error) || '修订请求失败（HTTP ' + response.status + '）。');
+    }
+    return data;
   } catch (error) {
-    status.textContent = '修订失败，原字幕未被覆盖：' + String(error.message || error);
-    detail.textContent = '失败 · ' + String(error.message || error);
-  } finally {
-    button.disabled = false;
+    if (controller.signal.aborted) {
+      throw new Error('修订请求超过 20 秒未响应；后台任务可能仍在运行。');
+    }
+    throw error;
+  } finally { window.clearTimeout(timeout); }
+}
+
+async function watchRevisionJob(job, url) {
+  if (!job || !['queued', 'running', 'completed', 'failed', 'interrupted'].includes(job.status)) {
+    throw new Error('服务器没有返回有效的修订任务状态。');
+  }
+  while (['queued', 'running'].includes(job.status)) {
+    if (!job.id) throw new Error('服务器没有返回修订任务 ID。');
+    const percent = Math.max(0, Math.min(100, Number(job.progress) || 0));
+    showRevisionProgress(percent, percent + '% · ' + (job.detail || job.stage || '正在排队'));
+    await new Promise(resolve => window.setTimeout(resolve, 1200));
+    const data = await revisionRequest('/api/transcript/revise/jobs/' + encodeURIComponent(job.id));
+    job = data.job;
+    if (!job || !['queued', 'running', 'completed', 'failed', 'interrupted'].includes(job.status)) {
+      throw new Error('服务器没有返回有效的修订任务状态。');
+    }
+  }
+  if (job.status !== 'completed') throw new Error(job.error || job.detail || '修订任务未完成。');
+  const message = job.cached
+    ? '100% · 修订字幕已存在，直接使用数据库缓存。'
+    : '100% · 字幕修订完成，已持久保存。';
+  showRevisionProgress(100, message);
+  if (document.getElementById('url').value.trim() === url) {
+    const loaded = await loadVideo();
+    if (loaded) document.getElementById('status').textContent = message;
+    else document.getElementById('revisionDetail').textContent = message + ' 字幕载入失败，请重新获取字幕。';
   }
 }
 
 async function reviseYouTubeTranscript() {
+  if (revisionBusy) return;
   const url = document.getElementById('url').value.trim();
   const status = document.getElementById('status');
   if (!url) { status.textContent = '请先输入 YouTube 链接。'; return; }
   if (!window.confirm('使用 Whisper 重新标定字幕并保存到数据库？')) return;
-  const button = document.getElementById('reviseYouTube');
-  button.disabled = true;
-  status.textContent = '正在创建修订任务…';
+  setRevisionBusy(true);
+  // Show indeterminate progress BEFORE submitting the creation request.
+  showRevisionProgress(null, '正在创建修订任务…');
   try {
-    const response = await fetch('/api/transcript/revise', {
+    const data = await revisionRequest('/api/transcript/revise', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({url, learner_id:activeLearnerId})
     });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || '创建任务失败');
-    if (data.job.cached) {
-      await loadVideo();
-      status.textContent = '修订字幕已存在，直接使用数据库缓存。';
-      return;
-    }
     await watchRevisionJob(data.job, url);
-  } catch (error) {
-    status.textContent = '无法启动修订：' + String(error.message || error);
-  } finally { button.disabled = false; }
+  } catch (error) { showRevisionError(error); }
+  finally { setRevisionBusy(false); }
 }
 
-async function resumeRevisionProgress() {
+async function resumeRevisionProgress(showIdle) {
+  if (revisionBusy) return;
   const url = document.getElementById('url').value.trim();
   if (!url) return;
+  let ownsBusy = Boolean(showIdle);
+  if (showIdle) {
+    setRevisionBusy(true);
+    showRevisionProgress(null, '正在查询修订进度…');
+  }
   try {
-    const response = await fetch('/api/transcript/revise/current?url=' + encodeURIComponent(url));
-    const data = await response.json();
-    if (response.ok && data.ok && data.job && ['queued','running'].includes(data.job.status)) {
+    const data = await revisionRequest('/api/transcript/revise/current?url=' + encodeURIComponent(url));
+    // A manual submission may have started while the automatic check waited.
+    if (!showIdle && revisionBusy) return;
+    if (data.job && (showIdle || ['queued','running'].includes(data.job.status))) {
+      ownsBusy = true;
+      setRevisionBusy(true);
       await watchRevisionJob(data.job, url);
+    } else if (showIdle) {
+      showRevisionProgress(0, '当前视频没有修订任务，可点击“重新修订字幕”开始。');
     }
-  } catch (error) { console.warn('Revision status unavailable:', error); }
+  } catch (error) {
+    if (showIdle) showRevisionError(error);
+    else console.warn('Revision status unavailable:', error);
+  } finally { if (ownsBusy) setRevisionBusy(false); }
 }
+
+document.getElementById('refreshRevisionProgress').addEventListener('click', function () {
+  void resumeRevisionProgress(true);
+});
+
 async function loadVideo(options) {
   options = options || {};
   const url = document.getElementById("url").value.trim();
@@ -1390,7 +1451,7 @@ async function loadVideo(options) {
 
   if (!url) {
     status.innerHTML = '<span class="error">请先输入 YouTube 链接。</span>';
-    return;
+    return false;
   }
 
   status.textContent = "正在读取字幕…";
@@ -1413,7 +1474,7 @@ async function loadVideo(options) {
         generate.textContent = "使用 Whisper 生成字幕";
         generate.addEventListener("click", reviseYouTubeTranscript);
         status.append(prompt, generate);
-        return;
+        return false;
       }
       throw new Error(data.error || "字幕读取失败。");
     }
@@ -1461,9 +1522,11 @@ async function loadVideo(options) {
     resetForSentence();
 
     configureSourcePlayer();
+    return true;
   } catch (error) {
     status.innerHTML =
       '<span class="error">' + String(error.message || error) + "</span>";
+    return false;
   }
 }
 
@@ -1963,5 +2026,3 @@ window.onYouTubeIframeAPIReady = function () {
 <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>
-
-
