@@ -153,6 +153,12 @@ button.warn{background:#fef3c7;color:#92400e}
 .status{margin-top:10px;font-size:14px;color:var(--muted)}
 .error{color:var(--bad);white-space:pre-wrap}
 .feedback{margin-top:10px;min-height:24px;font-size:15px}
+.transcript-list{max-height:360px;overflow:auto;margin-top:10px}
+.transcript-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;padding:8px;border-bottom:1px solid #ddd;align-items:start}
+.transcript-row.current{background:#eef2ff}
+.transcript-row button{font-variant-numeric:tabular-nums;font-size:12px}
+.transcript-row span{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:540px){.transcript-row{grid-template-columns:1fr;gap:4px}}
 .ok{color:var(--ok);font-weight:700}
 .bad{color:var(--bad);font-weight:700}
 .badge{
@@ -275,10 +281,16 @@ button.warn{background:#fef3c7;color:#92400e}
         <button id="next">下一句 →</button>
         <button id="show" class="warn">显示/隐藏原文</button>
         <button id="translate">中文翻译</button>
+        <button id="toggleTranscript" type="button" aria-expanded="false" aria-controls="transcriptPanel" disabled>全部字幕</button>
         <button id="analyzeSentence" disabled>分析当前句</button><button id="sentenceLadderBtn" type="button">增强练习</button>
       </div>
 
       <div id="translation" class="translation-box"></div>
+      <section id="transcriptPanel" class="card" style="margin-top:12px" hidden aria-label="全部时间戳字幕">
+        <strong id="transcriptHeading">全部字幕</strong>
+        <div class="hint">当前练习使用的字幕与起止时间；点击时间可跳转并播放该句。</div>
+        <div id="transcriptList" class="transcript-list"></div>
+      </section>
       <div id="sentenceAnalysis" class="translation-box" style="white-space:pre-wrap"></div>
       <div id="sentenceLadderPanel" class="card" style="display:none;margin-top:12px">
         <strong id="ladderTitle">句子扩展训练</strong>
@@ -473,6 +485,8 @@ function renderContentAnalysis(analysis, recommendation) {
 }
 
 function updateUI() {
+  document.getElementById("toggleTranscript").disabled = !items.length;
+  renderTranscriptList();
   if (!items.length) {
     document.getElementById("pos").textContent = "0 / 0";
     return;
@@ -490,6 +504,48 @@ function updateUI() {
 
   document.getElementById("bar").style.width =
     (((index + 1) / items.length) * 100).toFixed(2) + "%";
+}
+
+function formatTranscriptTime(seconds) {
+  const ms = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+  return String(Math.floor(ms / 60000)).padStart(2, "0") + ":" +
+    String(Math.floor(ms / 1000) % 60).padStart(2, "0") + "." +
+    String(ms % 1000).padStart(3, "0");
+}
+
+let transcriptListItems = null;
+function renderTranscriptList() {
+  const panel = document.getElementById("transcriptPanel");
+  if (panel.hidden) return;
+  const list = document.getElementById("transcriptList");
+  document.getElementById("transcriptHeading").textContent = "全部字幕 · " + items.length + " 条";
+  if (transcriptListItems !== items) {
+    list.textContent = "";
+    items.forEach(function (item, sentenceIndex) {
+      const row = document.createElement("div");
+      row.className = "transcript-row";
+      const jump = document.createElement("button");
+      jump.type = "button";
+      const end = item.end ?? (Number(item.start || 0) + Number(item.duration || 0));
+      jump.textContent = String(sentenceIndex + 1) + " · " +
+        formatTranscriptTime(item.start) + "–" + formatTranscriptTime(end);
+      jump.setAttribute("aria-label", "跳转并播放第 " + (sentenceIndex + 1) + " 句");
+      jump.addEventListener("click", function () {
+        if (sentenceIndex !== index) moveSentence(sentenceIndex - index, false);
+        playCurrent();
+      });
+      const text = document.createElement("span");
+      text.textContent = item.text;
+      row.append(jump, text);
+      list.appendChild(row);
+    });
+    transcriptListItems = items;
+  }
+  Array.from(list.children).forEach(function (row, sentenceIndex) {
+    row.classList.toggle("current", sentenceIndex === index);
+    if (sentenceIndex === index) row.firstElementChild.setAttribute("aria-current", "true");
+    else row.firstElementChild.removeAttribute("aria-current");
+  });
 }
 
 function renderInteractiveSentence(text) {
@@ -1678,6 +1734,16 @@ document.getElementById("translate").addEventListener("click", translateCurrent)
 document.getElementById("analyzeSentence").addEventListener("click", analyzeCurrentSentence);
 document.getElementById("addVocab").addEventListener("click", addActiveWordToVocabulary);
 document.getElementById("check").addEventListener("click", checkCurrent);
+document.getElementById("toggleTranscript").addEventListener("click", function () {
+  const panel = document.getElementById("transcriptPanel");
+  panel.hidden = !panel.hidden;
+  this.setAttribute("aria-expanded", String(!panel.hidden));
+  this.textContent = panel.hidden ? "全部字幕" : "收起字幕";
+  if (!panel.hidden) {
+    void logPracticeEvent("reveal", 0, "all_transcript");
+    renderTranscriptList();
+  }
+});
 document.getElementById("clear").addEventListener("click", function () {
   document.getElementById("answer").value = "";
   document.getElementById("feedback").innerHTML = "";
@@ -1904,3 +1970,5 @@ window.onYouTubeIframeAPIReady = function () {
 <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>
+
+
