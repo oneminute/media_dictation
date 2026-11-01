@@ -309,6 +309,12 @@ button.warn{background:#fef3c7;color:#92400e}
       </div>
 
       <div id="feedback" class="feedback"></div>
+      <div id="firstAttemptComparison" class="feedback" hidden>
+        <div><strong>首次听写：</strong></div>
+        <div id="firstAttemptText" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>
+        <div style="margin-top:8px"><strong>正确原文：</strong></div>
+        <div id="firstAttemptExpected" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>
+      </div>
     </div>
   </div>
 
@@ -348,6 +354,7 @@ let stopTimer = null;
 const translationCache = new Map();
 const sentenceAnalysisCache = new Map();
 let completedSentenceKey = null;
+let firstAttemptText = null;
 let sentenceAnalysisRequestId = 0;
 const wordLookupCache = new Map();
 let activeWordLookup = null;
@@ -677,6 +684,10 @@ function focusAnswer() {
 
 function resetForSentence() {
   closeLadder();
+  firstAttemptText = null;
+  document.getElementById("firstAttemptComparison").hidden = true;
+  document.getElementById("firstAttemptText").textContent = "";
+  document.getElementById("firstAttemptExpected").textContent = "";
   sentenceStartedAt = Date.now();
   document.getElementById("answer").value = "";
   document.getElementById("feedback").innerHTML = "";
@@ -1045,6 +1056,10 @@ function checkCurrent() {
 
   const answer = document.getElementById("answer");
   const answerBefore = answer.value;
+  if (firstAttemptText === null) {
+    firstAttemptText = answerBefore;
+  }
+  document.getElementById("firstAttemptComparison").hidden = true;
   const edit = firstEdit(
     answerBefore,
     items[index].text
@@ -1059,6 +1074,9 @@ function checkCurrent() {
   void logAttempt("correct", answerBefore, null);
   document.getElementById("feedback").innerHTML =
     '<span class="ok">✓ 全部正确</span>';
+  document.getElementById("firstAttemptText").textContent = firstAttemptText;
+  document.getElementById("firstAttemptExpected").textContent = items[index].text;
+  document.getElementById("firstAttemptComparison").hidden = false;
   completedSentenceKey = items[index].text;
   document.getElementById("analyzeSentence").disabled = false;
   focusAnswer();
@@ -1879,3 +1897,4 @@ window.onYouTubeIframeAPIReady = function () {
 <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>
+

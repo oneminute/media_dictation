@@ -1,5 +1,47 @@
 const { test, expect } = require("@playwright/test");
 
+test("completed sentences show the unchanged first submission", async ({ page }) => {
+  await mockYouTube(page);
+  await page.goto("/");
+  // Isolate the input lifecycle from transcript/network services.
+  await page.evaluate(() => {
+    items = [
+      {text: "Hello world.", start: 0, duration: 1},
+      {text: "Hello world.", start: 1, duration: 1},
+      {text: "Good morning.", start: 2, duration: 1}
+    ];
+    index = 0;
+    resetForSentence();
+  });
+  const comparison = page.locator("#firstAttemptComparison");
+  await expect(comparison).toBeHidden();
+  const original = "  Hello\nwrong <img src=x>  ";
+  await page.locator("#answer").fill(original);
+  await page.locator("#answer").press("Enter");
+  await expect(comparison).toBeHidden();
+  await page.locator("#clear").click();
+  await page.locator("#answer").fill("Hello world.");
+  await page.locator("#check").click();
+  await expect(comparison).toBeVisible();
+  expect(await page.locator("#firstAttemptText").textContent()).toBe(original);
+  await expect(page.locator("#firstAttemptText img")).toHaveCount(0);
+  await expect(page.locator("#firstAttemptExpected")).toHaveText("Hello world.");
+  await page.locator("#answer").press("Enter");
+  expect(await page.locator("#firstAttemptText").textContent()).toBe(original);
+  await page.locator("#next").click();
+  await expect(comparison).toBeHidden();
+  await page.locator("#answer").fill("hello world");
+  await page.locator("#answer").press("Enter");
+  await expect(comparison).toBeVisible();
+  await expect(page.locator("#firstAttemptText")).toHaveText("hello world");
+  await page.locator("#next").click();
+  await page.locator("#answer").press("Enter");
+  await page.locator("#answer").fill("Good morning.");
+  await page.locator("#answer").press("Enter");
+  await expect(comparison).toBeVisible();
+  expect(await page.locator("#firstAttemptText").textContent()).toBe("");
+});
+
 async function mockYouTube(page) {
   await page.route("https://www.youtube.com/iframe_api", async route => {
     await route.fulfill({
@@ -257,3 +299,4 @@ test("new household pages load", async ({ page }) => {
   await page.goto("/review");
   await expect(page.getByRole("heading", { name: /错句/ })).toBeVisible();
 });
+
