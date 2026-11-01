@@ -1294,14 +1294,14 @@ async function reviseYouTubeTranscript() {
   const url = document.getElementById('url').value.trim();
   const status = document.getElementById('status');
   if (!url) { status.textContent = '请先输入 YouTube 链接。'; return; }
-  if (!window.confirm('使用 Whisper 重新标定字幕并保存到数据库？')) return;
+  if (!window.confirm('使用 Whisper 逐词标定，再由所选 AI 根据上下文进行语义断句，并保存到数据库？首次升级旧字幕可能需要重新转写。')) return;
   const button = document.getElementById('reviseYouTube');
   button.disabled = true;
   status.textContent = '正在创建修订任务…';
   try {
     const response = await fetch('/api/transcript/revise', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({url, learner_id:activeLearnerId})
+      body:JSON.stringify({url, learner_id:activeLearnerId, provider:activeLlmProvider})
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || '创建任务失败');
@@ -1394,6 +1394,13 @@ async function loadVideo(options) {
       options.reuseSessionId
         ? "已恢复练习，第 " + String(index + 1) + " / " + String(items.length) + " 句。"
         : "已生成 " + String(items.length) + " 个听写句子。单按 Ctrl 开始/重播当前句。";
+    if (data.revision_outdated) {
+      status.textContent += " 当前使用旧版修订，请点击重新修订以升级语义断句。";
+    } else if (data.segmentation_method === "semantic") {
+      status.textContent += " 已使用语义断句。";
+    } else {
+      status.textContent += " 当前按原字幕标点合并；重新修订可使用 AI 语义断句。";
+    }
 
     if (options.reuseSessionId) {
       sessionId = Number(options.reuseSessionId);
@@ -1897,4 +1904,3 @@ window.onYouTubeIframeAPIReady = function () {
 <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>
-

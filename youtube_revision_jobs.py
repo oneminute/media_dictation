@@ -35,10 +35,10 @@ def _update(job_id, status, stage, progress, detail='', error=''):
         conn.execute('UPDATE youtube_revision_jobs SET status=?, stage=?, progress=?, detail=?, error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
                      (status, stage, min(100, max(0, int(progress))), detail, error, job_id))
 
-def _run(job_id, video_id):
+def _run(job_id, video_id, provider_override=None):
     try:
         _update(job_id, 'running', 'preparing', 1, '正在准备修订')
-        revise_youtube(video_id, progress_callback=lambda p, stage, detail:
+        revise_youtube(video_id, provider_override=provider_override, progress_callback=lambda p, stage, detail:
                        _update(job_id, 'running', stage, p, detail))
         _update(job_id, 'completed', 'completed', 100, '已保存到数据库')
     except Exception as exc:
@@ -47,8 +47,8 @@ def _run(job_id, video_id):
         with _lock:
             _running.discard(video_id)
 
-def submit(video_id):
-    cached = get_revision(video_id)
+def submit(video_id, provider_override=None):
+    cached = get_revision(video_id, require_current=True)
     if cached is not None:
         return {'status':'completed','stage':'cached','progress':100,'cached':True,'detail':'使用数据库缓存'}
     with _lock:
@@ -61,5 +61,5 @@ def submit(video_id):
             conn.execute('INSERT INTO youtube_revision_jobs(id,video_id,status,stage) VALUES(?,?,?,?)',
                          (job_id, video_id, 'queued', 'queued'))
         _running.add(video_id)
-        _executor.submit(_run, job_id, video_id)
+        _executor.submit(_run, job_id, video_id, provider_override)
         return get_job(job_id)

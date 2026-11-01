@@ -11,9 +11,11 @@ from pathlib import Path
 
 from media_service import transcribe_media, whisper_available
 from storage import connect
-from transcript_service import fetch_best_transcript, merge_caption_fragments
+from semantic_segmentation import segment_timed_words, SEMANTIC_VERSION
+from transcript_service import merge_caption_fragments
 
-REVISION_VERSION = "caption-align-v2"
+REVISION_VERSION = SEMANTIC_VERSION
+AUDIO_SOURCE_VERSION = "whisper-words-v1"
 
 
 def _ensure_table(conn):
@@ -28,14 +30,25 @@ def _ensure_table(conn):
     """)
 
 
-def get_revision(video_id: str):
+def get_revision(video_id: str, *, require_current: bool = False):
     with connect() as conn:
         _ensure_table(conn)
         row = conn.execute(
             "SELECT transcript_json FROM youtube_transcript_revisions WHERE video_id=? AND revision_version=?",
             (video_id, REVISION_VERSION),
         ).fetchone()
+        if row is None and not require_current:
+            row = conn.execute(
+                "SELECT transcript_json FROM youtube_transcript_revisions WHERE video_id=? "
+                "AND revision_version<>? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (video_id, AUDIO_SOURCE_VERSION),
+            ).fetchone()
+            if row:
+                payload = json.loads(row["transcript_json"])
+                payload["revision_outdated"] = True
+                return payload
     return json.loads(row["transcript_json"]) if row else None
+
 
 
 def _normalize(token: str) -> str:
@@ -81,50 +94,71 @@ def align_caption_to_whisper(caption_items, timed_words):
     return merge_caption_fragments(units)
 
 
-def revise_youtube(video_id: str, progress_callback=None):
+def revise_youtube(video_id: str, progress_callback=None, provider_override=None):
     def report(p, stage, detail):
         if progress_callback:
             progress_callback(p, stage, detail)
-    cached = get_revision(video_id)
+    cached = get_revision(video_id, require_current=True)
     if cached is not None:
         return cached, True
-    if not whisper_available():
-        raise RuntimeError("Whisper 未安装，请先运行 setup_whisper_windows.bat。")
-    report(3, 'downloading', '正在下载视频音频')
-    with tempfile.TemporaryDirectory(prefix="media-dictation-yt-") as directory:
-        output = str(Path(directory) / "audio.%(ext)s")
-        url = "https://www.youtube.com/watch?v=" + video_id
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "yt_dlp", "--no-playlist",
-                 "--extract-audio", "--output", output, url],
-                check=True, capture_output=True, text=True, timeout=600,
+    with connect() as conn:
+        _ensure_table(conn)
+        source = conn.execute(
+            "SELECT transcript_json FROM youtube_transcript_revisions "
+            "WHERE video_id=? AND revision_version=?", (video_id, AUDIO_SOURCE_VERSION),
+        ).fetchone()
+    if source:
+        result = json.loads(source["transcript_json"])
+        report(90, 'audio_cached', '已读取逐词转写缓存，无需重复 Whisper')
+    else:
+        if not whisper_available():
+            raise RuntimeError("Whisper 未安装，请先运行 setup_whisper_windows.bat。")
+        report(3, 'downloading', '正在下载视频音频')
+        with tempfile.TemporaryDirectory(prefix="media-dictation-yt-") as directory:
+            output = str(Path(directory) / "audio.%(ext)s")
+            url = "https://www.youtube.com/watch?v=" + video_id
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "yt_dlp", "--no-playlist",
+                     "--extract-audio", "--output", output, url],
+                    check=True, capture_output=True, text=True, timeout=600,
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError("下载 YouTube 音频失败，请确认已安装 yt-dlp 且视频可访问。") from exc
+            candidates = [p for p in Path(directory).glob("audio.*") if p.is_file()]
+            if not candidates:
+                raise RuntimeError("未找到下载后的音频文件。")
+            report(15, 'loading_model', '正在加载 Whisper 模型')
+            result = transcribe_media(candidates[0], include_words=True, progress_callback=lambda p, stage, detail: report(15 + int(p * 0.75), stage, detail))
+        # Save the expensive transcription before calling the LLM. A failed
+        # semantic request can be retried without re-downloading/transcribing.
+        with connect() as conn:
+            _ensure_table(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO youtube_transcript_revisions "
+                "(video_id, revision_version, transcript_json) VALUES (?, ?, ?)",
+                (video_id, AUDIO_SOURCE_VERSION, json.dumps(result, ensure_ascii=False)),
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            raise RuntimeError("下载 YouTube 音频失败，请确认已安装 yt-dlp 且视频可访问。") from exc
-        candidates = [p for p in Path(directory).glob("audio.*") if p.is_file()]
-        if not candidates:
-            raise RuntimeError("未找到下载后的音频文件。")
-        report(15, 'loading_model', '正在加载 Whisper 模型')
-        result = transcribe_media(candidates[0], include_words=True, progress_callback=lambda p, stage, detail: report(15 + int(p * 0.75), stage, detail))
-    report(91, 'aligning', '正在重新对齐字幕')
-    aligned_items = None
-    caption_source = None
-    try:
-        caption_source = fetch_best_transcript(video_id)
-        aligned_items = align_caption_to_whisper(
-            caption_source["items"], result.get("words", [])
-        )
-    except Exception:
-        pass
+    report(91, 'semantic_segmenting', '正在根据上下文进行语义断句')
+    timed_words = result.get("words", [])
+    semantic_items, models = segment_timed_words(
+        timed_words,
+        provider_override=provider_override,
+        progress_callback=lambda fraction: report(
+            91 + int(fraction * 5), 'semantic_segmenting',
+            f'语义断句 {fraction * 100:.0f}%'),
+    )
 
     payload = {
-        "items": aligned_items or result["items"],
-        "alignment_method": "youtube-caption+whisper" if aligned_items else "whisper-only",
-        "alignment_fallback": aligned_items is None,
+        "items": semantic_items,
+        "words": timed_words,
+        "segmentation_method": "semantic",
+        "segmentation_models": models,
+        "alignment_method": "whisper-word-timestamps",
+        "alignment_fallback": False,
         "language": result.get("language", "en"),
         "duration": result.get("duration", 0),
-        "is_generated": bool(caption_source.get("is_generated", True)) if aligned_items else True,
+        "is_generated": True,
         "segmentation_version": REVISION_VERSION,
         "revision": True,
     }

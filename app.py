@@ -40,6 +40,7 @@ from llm_service import (
     generate_learning_summary,
     llm_provider,
     normalize_lookup_word,
+    normalize_provider,
     ollama_available,
     ollama_base_url,
     ollama_model,
@@ -1441,7 +1442,11 @@ def revise_transcript():
     video_id = extract_video_id(str(payload.get("url") or payload.get("video_id") or ""))
     if not video_id:
         return jsonify({"ok": False, "error": "无效的 YouTube 链接。"}), 400
-    job = submit_youtube_revision(video_id)
+    try:
+        provider = normalize_provider(payload.get("provider"))
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    job = submit_youtube_revision(video_id, provider_override=provider)
     return jsonify({"ok": True, "job": job}), 200 if job.get("cached") else 202
 
 

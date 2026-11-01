@@ -26,7 +26,7 @@ class SegmentationTests(unittest.TestCase):
             "Hello everyone.",
         )
 
-    def test_prefers_comma_for_long_sentence(self):
+    def test_preserves_complete_long_sentence(self):
         items = [
             {"text": "I think one of the most important things", "start": 0.0, "end": 2.0},
             {"text": "we need to understand about learning,", "start": 2.1, "end": 4.0},
@@ -39,13 +39,13 @@ class SegmentationTests(unittest.TestCase):
         self.assertEqual(
             [item["text"] for item in segments],
             [
-                "I think one of the most important things we need to understand about learning,",
-                "especially when we are trying something difficult,",
+                "I think one of the most important things we need to understand about learning, "
+                "especially when we are trying something difficult, "
                 "is that progress is rarely a straight line.",
             ],
         )
 
-    def test_clause_starter_is_a_good_break(self):
+    def test_does_not_split_before_dependent_clause(self):
         items = [
             {"text": "Today I want to show you", "start": 0.0, "end": 1.7},
             {"text": "how a very small change", "start": 1.8, "end": 3.2},
@@ -59,7 +59,7 @@ class SegmentationTests(unittest.TestCase):
         self.assertEqual(
             [item["text"] for item in segments],
             [
-                "Today I want to show you how a very small change can make a big difference",
+                "Today I want to show you how a very small change can make a big difference "
                 "because we often underestimate the effect of repeated practice",
             ],
         )
@@ -77,7 +77,8 @@ class SegmentationTests(unittest.TestCase):
 
         self.assertEqual(
             segments[0]["text"],
-            "This is one of the most important ideas that you should remember",
+            "This is one of the most important ideas that you should remember "
+            "when you practice listening every single day",
         )
 
 
