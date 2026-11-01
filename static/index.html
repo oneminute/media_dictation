@@ -232,7 +232,7 @@ button.warn{background:#fef3c7;color:#92400e}
       <input id="url" type="text" placeholder="YouTube / YouTube Music Podcast 链接" autocomplete="off">
       <button id="load" class="primary">获取字幕并开始</button>
       <button id="reviseYouTube" type="button" title="使用 Whisper 重新识别音频并保存修订字幕到数据库">重新修订字幕</button>
-      <button id="forceReviseYouTube" type="button" title="忽略修订与逐词缓存，重新运行 Whisper 和 AI 语义断句">强制重新生成</button>
+      <button id="forceReviseYouTube" type="button" title="忽略修订与逐词缓存，重新运行 Whisper 和 AI 逻辑意群分段">强制重新生成</button>
     </div>
     <div class="source-divider">或者使用本地媒体</div>
     <div class="file-row">
@@ -1404,8 +1404,8 @@ async function reviseYouTubeTranscript(force) {
   const status = document.getElementById('status');
   if (!url) { status.textContent = '请先输入 YouTube 链接。'; return; }
   const prompt = force
-    ? '忽略已有缓存，重新运行 Whisper 和 AI 语义断句？成功后替换保存结果；失败时保留旧字幕。'
-    : '使用 Whisper 逐词标定，再由所选 AI 根据上下文进行语义断句并保存？已有当前版本结果时将复用；如需重做，请使用“强制重新生成”。';
+    ? '忽略已有缓存，重新运行 Whisper 和 AI 逻辑意群分段？成功后替换保存结果；失败时保留旧字幕。'
+    : '使用 Whisper 逐词标定，再由所选 AI 根据上下文划分逻辑意群并保存？已有当前版本结果时将复用；如需重做，请使用“强制重新生成”。';
   if (!window.confirm(prompt)) return;
   setRevisionBusy(true);
   // Show indeterminate progress BEFORE submitting the creation request.
@@ -1521,11 +1521,11 @@ async function loadVideo(options) {
         ? "已恢复练习，第 " + String(index + 1) + " / " + String(items.length) + " 句。"
         : "已生成 " + String(items.length) + " 个听写句子。单按 Ctrl 开始/重播当前句。";
     if (data.revision_outdated) {
-      status.textContent += " 当前使用旧版修订，请点击重新修订以升级语义断句。";
+      status.textContent += " 当前使用旧版修订，请点击重新修订以升级逻辑意群分段。";
     } else if (data.segmentation_method === "semantic") {
-      status.textContent += " 已使用语义断句。";
+      status.textContent += " 已按逻辑意群分段。";
     } else {
-      status.textContent += " 当前按原字幕标点合并；重新修订可使用 AI 语义断句。";
+      status.textContent += " 当前按原字幕标点合并；重新修订可使用 AI 逻辑意群分段。";
     }
 
     if (options.reuseSessionId) {

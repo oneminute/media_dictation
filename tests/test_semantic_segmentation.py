@@ -16,9 +16,9 @@ def timed(text):
 
 
 class SemanticSegmentationTests(unittest.TestCase):
-    def test_long_sentence_and_long_pauses_are_not_cut(self):
-        source = timed("Although we had been waiting for a very long time in the cold "
-                       "outside the station we decided to stay until our friends arrived.")
+    def test_one_coherent_clause_is_not_forced_apart_by_word_count_or_pauses(self):
+        source = timed("The very old wooden box beside the large window in our "
+                       "grandmother's quiet country house contains several carefully wrapped family photographs.")
         with patch.object(semantic, "_request_ends", return_value=([len(source)-1], "test")):
             result, models = semantic.segment_timed_words(source)
         self.assertEqual(len(result), 1)
@@ -26,6 +26,34 @@ class SemanticSegmentationTests(unittest.TestCase):
         self.assertEqual(result[0]["start"], source[0]["start"])
         self.assertEqual(result[0]["end"], source[-1]["end"])
         self.assertEqual(models, ["test"])
+
+    def test_logical_chunks_inside_one_sentence_keep_all_words_and_audio_times(self):
+        examples = [
+            ["Although the project was difficult,",
+             "we finished the first version on Friday",
+             "and tested it over the weekend."],
+            ["I thought I was stuck in a rut,",
+             "so I decided to try something new for thirty days."],
+            ["If you want to improve your listening,",
+             "you need to practice every day."],
+            ["We stayed home", "because the roads were covered in ice."],
+        ]
+        for chunks in examples:
+            with self.subTest(chunks=chunks):
+                source = timed(" ".join(chunks))
+                ends, count = [], 0
+                for chunk in chunks:
+                    count += len(chunk.split())
+                    ends.append(count - 1)
+                with patch.object(semantic.llm, "ollama_chat", return_value=json.dumps({"ends": ends})):
+                    result, _ = semantic.segment_timed_words(source, provider_override="ollama")
+                self.assertEqual([r["text"] for r in result], chunks)
+                self.assertEqual(" ".join(r["text"] for r in result), " ".join(w["text"] for w in source))
+                start = 0
+                for item, end in zip(result, ends):
+                    self.assertEqual(item["start"], source[start]["start"])
+                    self.assertEqual(item["end"], source[end]["end"])
+                    start = end + 1
 
     def test_unfinished_batch_is_carried_to_more_context(self):
         source = timed("If you wait for me I will go with you. Thanks.")
@@ -98,6 +126,19 @@ class RevisionCacheTests(unittest.TestCase):
     def test_old_cache_is_readable_but_not_reused_as_semantic(self):
         self.assertTrue(revision.get_revision("video123")["revision_outdated"])
         self.assertIsNone(revision.get_revision("video123", require_current=True))
+
+    def test_complete_sentence_cache_is_upgraded_using_saved_word_timing(self):
+        with connect() as conn:
+            conn.execute("INSERT INTO youtube_transcript_revisions(video_id,revision_version,transcript_json) VALUES(?,?,?)",
+                         ("video123", "semantic-sentences-v1", json.dumps({"items": [{"text": "old whole sentence"}]})))
+        self.assertIsNone(revision.get_revision("video123", require_current=True))
+        with patch.object(revision, "transcribe_media", side_effect=AssertionError("must reuse word timing")), \
+             patch.object(semantic, "_request_ends", return_value=([1, 3], "test")):
+            result, cached = revision.revise_youtube("video123")
+        self.assertFalse(cached)
+        self.assertEqual(result["segmentation_unit"], "thought_group")
+        self.assertEqual(result["segmentation_version"], "semantic-thought-groups-v2")
+        self.assertEqual(len(result["items"]), 2)
 
     def test_semantic_result_and_timestamps_persist_and_are_reused(self):
         with patch.object(semantic, "_request_ends", return_value=([1, 3], "test")) as model, \

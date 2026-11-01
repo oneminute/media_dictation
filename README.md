@@ -17,13 +17,19 @@ and optional OpenAI fallback.
 - Clean non-speech cues such as `[Music]`.
 - Initial captions are joined using existing sentence-ending punctuation,
   without cutting at word counts or pauses. Unpunctuated captions may remain long.
-- Use **重新修订** for Whisper word timing followed by AI semantic sentence
+- Use **重新修订** for Whisper word timing followed by AI semantic thought-group
   segmentation with the selected Ollama / OpenAI provider. The model selects
   boundaries from the transcription; it cannot rewrite words or timestamps.
 - Semantic revision uses Whisper text rather than preserving YouTube caption
   wording, so transcription accuracy still depends on Whisper.
-- A sentence can exceed 18 words. Long sentences belong in the progressive
-  sentence practice rather than being forcibly truncated.
+- Long sentences are split at logical transitions such as condition/consequence,
+  reason/result, contrast, coordinated actions and substantial clauses. Each
+  chunk must be coherent in context; it need not be a complete grammatical
+  sentence. Short simple sentences and tightly connected phrases remain intact.
+  Word counts and pauses never force boundaries.
+- The thought-group revision version supersedes complete-sentence revisions.
+  Click **重新修订字幕** to upgrade using saved Whisper word timings; a full
+  Whisper rerun is only needed when no word timings exist or when forcing it.
 - Revisions and word timing are saved in SQLite. Old revisions remain readable;
   click **重新修订** to upgrade them. Old practice-session snapshots retain their
   original sentence indexes; reloading captions uses the upgraded transcript.

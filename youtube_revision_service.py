@@ -141,20 +141,21 @@ def revise_youtube(video_id: str, progress_callback=None, provider_override=None
                 "transcript_json=excluded.transcript_json, created_at=CURRENT_TIMESTAMP",
                 (video_id, AUDIO_SOURCE_VERSION, json.dumps(result, ensure_ascii=False)),
             )
-    report(91, 'semantic_segmenting', '正在根据上下文进行语义断句')
+    report(91, 'semantic_segmenting', '正在根据上下文划分逻辑意群')
     timed_words = result.get("words", [])
     semantic_items, models = segment_timed_words(
         timed_words,
         provider_override=provider_override,
         progress_callback=lambda fraction: report(
             91 + int(fraction * 5), 'semantic_segmenting',
-            f'语义断句 {fraction * 100:.0f}%'),
+            f'逻辑意群分段 {fraction * 100:.0f}%'),
     )
 
     payload = {
         "items": semantic_items,
         "words": timed_words,
         "segmentation_method": "semantic",
+        "segmentation_unit": "thought_group",
         "segmentation_models": models,
         "alignment_method": "whisper-word-timestamps",
         "alignment_fallback": False,
