@@ -94,12 +94,12 @@ def align_caption_to_whisper(caption_items, timed_words):
     return merge_caption_fragments(units)
 
 
-def revise_youtube(video_id: str, progress_callback=None, provider_override=None):
+def revise_youtube(video_id: str, progress_callback=None, provider_override=None, *, force=False):
     def report(p, stage, detail):
         if progress_callback:
             progress_callback(p, stage, detail)
     cached = get_revision(video_id, require_current=True)
-    if cached is not None:
+    if cached is not None and not force:
         return cached, True
     with connect() as conn:
         _ensure_table(conn)
@@ -107,7 +107,7 @@ def revise_youtube(video_id: str, progress_callback=None, provider_override=None
             "SELECT transcript_json FROM youtube_transcript_revisions "
             "WHERE video_id=? AND revision_version=?", (video_id, AUDIO_SOURCE_VERSION),
         ).fetchone()
-    if source:
+    if source and not force:
         result = json.loads(source["transcript_json"])
         report(90, 'audio_cached', '已读取逐词转写缓存，无需重复 Whisper')
     else:
@@ -135,8 +135,10 @@ def revise_youtube(video_id: str, progress_callback=None, provider_override=None
         with connect() as conn:
             _ensure_table(conn)
             conn.execute(
-                "INSERT OR IGNORE INTO youtube_transcript_revisions "
-                "(video_id, revision_version, transcript_json) VALUES (?, ?, ?)",
+                "INSERT INTO youtube_transcript_revisions "
+                "(video_id, revision_version, transcript_json) VALUES (?, ?, ?) "
+                "ON CONFLICT(video_id, revision_version) DO UPDATE SET "
+                "transcript_json=excluded.transcript_json, created_at=CURRENT_TIMESTAMP",
                 (video_id, AUDIO_SOURCE_VERSION, json.dumps(result, ensure_ascii=False)),
             )
     report(91, 'semantic_segmenting', '正在根据上下文进行语义断句')
@@ -166,8 +168,10 @@ def revise_youtube(video_id: str, progress_callback=None, provider_override=None
     with connect() as conn:
         _ensure_table(conn)
         conn.execute(
-            "INSERT OR IGNORE INTO youtube_transcript_revisions "
-            "(video_id, revision_version, transcript_json) VALUES (?, ?, ?)",
+            "INSERT INTO youtube_transcript_revisions "
+            "(video_id, revision_version, transcript_json) VALUES (?, ?, ?) "
+            "ON CONFLICT(video_id, revision_version) DO UPDATE SET "
+            "transcript_json=excluded.transcript_json, created_at=CURRENT_TIMESTAMP",
             (video_id, REVISION_VERSION, json.dumps(payload, ensure_ascii=False)),
         )
     return get_revision(video_id) or payload, False

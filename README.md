@@ -31,6 +31,10 @@ and optional OpenAI fallback.
   Its completed Whisper transcription is cached so retries avoid retranscription.
   Semantic timeouts default to 90 seconds per model request; configure
   `OLLAMA_SEGMENTATION_TIMEOUT_SECONDS` / `OPENAI_SEGMENTATION_TIMEOUT_SECONDS`.
+- **强制重新生成** skips both the completed revision and word-transcription
+  caches, runs Whisper and semantic segmentation again, and replaces the saved
+  result only on success. Ordinary revision reuses a current completed result;
+  the UI explicitly says when no regeneration occurred.
 - Play only the current phrase and pause at its saved end timestamp.
 - Hide source text by default.
 - Press **Ctrl** by itself to replay the current phrase.

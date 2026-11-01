@@ -144,6 +144,62 @@ class RevisionCacheTests(unittest.TestCase):
         self.assertEqual(len(result["items"]), 2)
 
 
+class ForcedRevisionTests(unittest.TestCase):
+    setUp = RevisionCacheTests.setUp
+    tearDown = RevisionCacheTests.tearDown
+    def test_force_bypasses_both_caches_and_replaces_result(self):
+        with patch.object(semantic, "_request_ends", return_value=([1, 3], "test")):
+            previous, _ = revision.revise_youtube("video123")
+
+        def download(command, **kwargs):
+            output = command[command.index("--output") + 1]
+            Path(output.replace("%(ext)s", "wav")).write_bytes(b"fresh audio")
+
+        fresh = {**self.source, "words": timed("Fresh words. New sentence.")}
+        with patch.object(revision, "whisper_available", return_value=True), \
+             patch.object(revision.subprocess, "run", side_effect=download) as downloaded, \
+             patch.object(revision, "transcribe_media", return_value=fresh) as transcribe, \
+             patch.object(semantic, "_request_ends", return_value=([1, 3], "test")):
+            result, cached = revision.revise_youtube("video123", force=True)
+        self.assertFalse(cached)
+        self.assertEqual(downloaded.call_count, 1)
+        self.assertEqual(transcribe.call_count, 1)
+        self.assertNotEqual(result, previous)
+        self.assertEqual(revision.get_revision("video123", require_current=True), result)
+        self.assertEqual(result["items"][0]["text"], "Fresh words.")
+
+    def test_force_failure_keeps_current_completed_revision(self):
+        with patch.object(semantic, "_request_ends", return_value=([1, 3], "test")):
+            previous, _ = revision.revise_youtube("video123")
+        def download(command, **kwargs):
+            output = command[command.index("--output") + 1]
+            Path(output.replace("%(ext)s", "wav")).write_bytes(b"fresh audio")
+
+        with patch.object(revision, "whisper_available", return_value=True), \
+             patch.object(revision.subprocess, "run", side_effect=download), \
+             patch.object(revision, "transcribe_media", return_value=self.source), \
+             patch.object(revision, "segment_timed_words", side_effect=RuntimeError("semantic failed")):
+            with self.assertRaises(RuntimeError):
+                revision.revise_youtube("video123", force=True)
+        self.assertEqual(revision.get_revision("video123", require_current=True), previous)
+
+    def test_force_submission_queues_even_with_existing_cache_and_deduplicates(self):
+        import youtube_revision_jobs as jobs
+        with patch.object(semantic, "_request_ends", return_value=([1, 3], "test")):
+            revision.revise_youtube("video123")
+        try:
+            with patch.object(jobs._executor, "submit") as submit:
+                cached = jobs.submit("video123")
+                self.assertTrue(cached["cached"])
+                job = jobs.submit("video123", "ollama", force=True)
+                self.assertEqual(job["status"], "queued")
+                submit.assert_called_once_with(jobs._run, job["id"], "video123", "ollama", True)
+                self.assertEqual(jobs.submit("video123", force=True)["id"], job["id"])
+                self.assertEqual(jobs.submit("video123")["id"], job["id"])
+        finally:
+            jobs._running.discard("video123")
+
+
 class RevisionApiTests(unittest.TestCase):
     def test_revision_passes_selected_provider_and_rejects_invalid_provider(self):
         import app
@@ -151,9 +207,21 @@ class RevisionApiTests(unittest.TestCase):
         with patch.object(app, "submit_youtube_revision", return_value={"status": "queued"}) as submit:
             response = client.post("/api/transcript/revise", json={"video_id": "UNP03fDSj1U", "provider": "ollama"})
             self.assertEqual(response.status_code, 202)
-            submit.assert_called_once_with("UNP03fDSj1U", provider_override="ollama")
+            submit.assert_called_once_with("UNP03fDSj1U", provider_override="ollama", force=False)
         with patch.object(app, "submit_youtube_revision") as submit:
             response = client.post("/api/transcript/revise", json={"video_id": "UNP03fDSj1U", "provider": "unknown"})
+            self.assertEqual(response.status_code, 400)
+            submit.assert_not_called()
+
+    def test_revision_accepts_explicit_force_and_rejects_strings(self):
+        import app
+        client = app.app.test_client()
+        with patch.object(app, "submit_youtube_revision", return_value={"status": "queued"}) as submit:
+            response = client.post("/api/transcript/revise", json={"video_id": "UNP03fDSj1U", "provider": "ollama", "force": True})
+            self.assertEqual(response.status_code, 202)
+            submit.assert_called_once_with("UNP03fDSj1U", provider_override="ollama", force=True)
+        with patch.object(app, "submit_youtube_revision") as submit:
+            response = client.post("/api/transcript/revise", json={"video_id": "UNP03fDSj1U", "force": "true"})
             self.assertEqual(response.status_code, 400)
             submit.assert_not_called()
 

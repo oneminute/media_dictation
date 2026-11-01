@@ -1446,7 +1446,10 @@ def revise_transcript():
         provider = normalize_provider(payload.get("provider"))
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    job = submit_youtube_revision(video_id, provider_override=provider)
+    force = payload.get("force", False)
+    if type(force) is not bool:
+        return jsonify({"ok": False, "error": "force 必须为布尔值。"}), 400
+    job = submit_youtube_revision(video_id, provider_override=provider, force=force)
     return jsonify({"ok": True, "job": job}), 200 if job.get("cached") else 202
 
 
