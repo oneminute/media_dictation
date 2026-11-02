@@ -39,6 +39,7 @@ from llm_service import (
     cache_candidates,
     generate_learning_summary,
     llm_provider,
+    deepseek_model,
     normalize_lookup_word,
     normalize_provider,
     ollama_available,
@@ -746,6 +747,7 @@ def health():
     provider = llm_provider()
     local_ready = ollama_available()
     openai_ready = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    deepseek_ready = bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
 
     return jsonify(
         {
@@ -771,6 +773,8 @@ def health():
                 if provider == "ollama"
                 else openai_ready
                 if provider == "openai"
+                else deepseek_ready
+                if provider == "deepseek"
                 else local_ready or openai_ready
             ),
             "ollama_available": local_ready,
@@ -795,6 +799,9 @@ def health():
                 "OLLAMA_AUTO_WORD_TIMEOUT_SECONDS",
                 7.0,
             ),
+            "deepseek_enabled": deepseek_ready,
+            "deepseek_model": deepseek_model(),
+            "deepseek_word_model": deepseek_model(word=True),
             "openai_enabled": openai_ready,
             "openai_translation_model": os.getenv(
                 "OPENAI_TRANSLATION_MODEL",
@@ -1196,7 +1203,7 @@ def word_lookup():
             prompt_version=WORD_PROMPT_VERSION,
         )
         if cached is not None:
-            label = f"ollama:{model}" if provider == "ollama" else model
+            label = f"{provider}:{model}" if provider in {"ollama", "deepseek"} else model
             return jsonify(
                 {
                     "ok": True,
@@ -1322,7 +1329,7 @@ def translate():
             prompt_version=SENTENCE_PROMPT_VERSION,
         )
         if cached is not None:
-            label = f"ollama:{model}" if provider == "ollama" else model
+            label = f"{provider}:{model}" if provider in {"ollama", "deepseek"} else model
             return jsonify(
                 {
                     "ok": True,
@@ -1408,7 +1415,7 @@ def sentence_analysis():
                 prompt_version=ANALYSIS_PROMPT_VERSION,
             )
             if cached is not None:
-                label = f"ollama:{model}" if provider == "ollama" else model
+                label = f"{provider}:{model}" if provider in {"ollama", "deepseek"} else model
                 return jsonify({
                     "ok": True,
                     "analysis": cached["translation"],

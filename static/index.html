@@ -217,6 +217,7 @@ button.warn{background:#fef3c7;color:#92400e}
         <option value="auto">LLM: Auto</option>
         <option value="ollama">LLM: Local Qwen</option>
         <option value="openai">LLM: OpenAI</option>
+        <option value="deepseek">LLM: DeepSeek</option>
       </select>
       <button id="addLearner" class="small-button">+ 学习者</button>
       <a href="/review">错句复习</a>
@@ -1998,7 +1999,19 @@ async function bootstrap() {
   try {
     mediaPlayer = document.getElementById("mediaPlayer");
     const providerSelect = document.getElementById("llmProviderSelect");
-    if (["auto","ollama","openai"].includes(activeLlmProvider)) {
+    if (!localStorage.getItem("mediaDictationLlmProvider")) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 4000);
+      try {
+        const response = await fetch("/api/health", {signal: controller.signal});
+        const health = await response.json();
+        if (response.ok && health.ok && !localStorage.getItem("mediaDictationLlmProvider")) {
+          activeLlmProvider = health.llm_provider || "auto";
+        }
+      } catch (error) { console.warn("Provider default unavailable:", error); }
+      finally { window.clearTimeout(timeout); }
+    }
+    if (["auto","ollama","openai","deepseek"].includes(activeLlmProvider)) {
       providerSelect.value = activeLlmProvider;
     } else {
       activeLlmProvider = "auto";

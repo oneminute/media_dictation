@@ -33,6 +33,8 @@ def analyze_english_sentence(
     text: str, provider_override: str | None = None,
 ) -> tuple[str, str, str]:
     provider = normalize_provider(provider_override)
+    if provider == "deepseek":
+        return deepseek_chat(system_prompt=ANALYSIS_SYSTEM_PROMPT, user_prompt=text, max_tokens=700)
 
     def local(timeout: float) -> tuple[str, str, str]:
         model = ollama_model("OLLAMA_TRANSLATION_MODEL")
@@ -91,13 +93,55 @@ def normalize_provider(value: str | None) -> str:
     provider = str(value or "").strip().lower()
     if provider in {"", "default"}:
         provider = os.getenv("LLM_PROVIDER", "auto").strip().lower() or "auto"
-    if provider not in {"auto", "ollama", "openai"}:
-        raise RuntimeError("LLM provider 必须是 auto、ollama 或 openai。")
+    if provider not in {"auto", "ollama", "openai", "deepseek"}:
+        raise RuntimeError("LLM provider 必须是 auto、ollama、openai 或 deepseek。")
     return provider
 
 
 def llm_provider() -> str:
     return normalize_provider(None)
+
+
+def deepseek_model(*, word: bool = False) -> str:
+    default = os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip() or "deepseek-flash"
+    return (os.getenv("DEEPSEEK_WORD_MODEL", default).strip() or default) if word else default
+
+
+def deepseek_chat(*, system_prompt: str, user_prompt: str, max_tokens: int,
+                  word: bool = False, timeout_override: float | None = None) -> tuple[str, str, str]:
+    key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("未配置 DEEPSEEK_API_KEY，请在项目 .env 中设置。")
+    model = deepseek_model(word=word)
+    timeout = timeout_override if timeout_override is not None else openai_timeout_seconds(
+        "DEEPSEEK_TIMEOUT_SECONDS", 45.0)
+    client = OpenAI(api_key=key,
+                    base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip().rstrip("/") or "https://api.deepseek.com",
+                    timeout=timeout, max_retries=0)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_prompt}],
+            max_tokens=max_tokens, stream=False,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+    except AuthenticationError as exc:
+        raise RuntimeError("DeepSeek API key 无效，请检查 DEEPSEEK_API_KEY。") from exc
+    except (PermissionDeniedError, NotFoundError, BadRequestError) as exc:
+        raise RuntimeError("DeepSeek API 拒绝请求，请检查 API 权限、地址和模型名。") from exc
+    except RateLimitError as exc:
+        raise RuntimeError("DeepSeek API 限流或额度不足。") from exc
+    except APITimeoutError as exc:
+        raise RuntimeError(f"DeepSeek API 请求超时（{timeout:g} 秒）。") from exc
+    except APIConnectionError as exc:
+        raise RuntimeError("无法连接 DeepSeek API。") from exc
+    if not response.choices or response.choices[0].finish_reason != "stop":
+        raise RuntimeError("DeepSeek 未返回完整结果，请重试或调整输出限制。")
+    content = response.choices[0].message.content
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("DeepSeek 返回了空结果。")
+    return content.strip(), "deepseek:" + model, "default"
 
 
 def ollama_base_url() -> str:
@@ -303,6 +347,8 @@ def translate_to_chinese(
     provider_override: str | None = None,
 ) -> tuple[str, str, str]:
     provider = normalize_provider(provider_override)
+    if provider == "deepseek":
+        return deepseek_chat(system_prompt="Translate English into natural Simplified Chinese. Return only the Chinese translation without explanations or labels.", user_prompt=text, max_tokens=200)
     if provider == "ollama":
         return translate_to_chinese_ollama(text)
     if provider == "openai":
@@ -420,6 +466,8 @@ def generate_learning_summary(
     provider_override: str | None = None,
 ) -> tuple[str, str, str]:
     provider = normalize_provider(provider_override)
+    if provider == "deepseek":
+        return deepseek_chat(system_prompt="你是一名英语听力训练教练。只根据提供的学习统计生成简洁、具体的中文总结，包含最近表现、做得好的地方、需要加强、接下来7天。样本不足时明确说明，不要推断CEFR等级，不要编造数据。", user_prompt=json.dumps(report, ensure_ascii=False), max_tokens=700)
     if provider == "ollama":
         return generate_learning_summary_ollama(report)
     if provider == "openai":
@@ -531,6 +579,8 @@ def translate_word_in_context(
     provider_override: str | None = None,
 ) -> tuple[str, str, str]:
     provider = normalize_provider(provider_override)
+    if provider == "deepseek":
+        return deepseek_chat(system_prompt="Explain the target English word as used in its sentence. Return only its concise Simplified Chinese meaning, usually 1-8 Chinese characters or a short phrase. Do not translate the whole sentence.", user_prompt=f"Target word: {word}\nSentence: {context_sentence}", max_tokens=80, word=True)
     if provider == "ollama":
         return translate_word_in_context_ollama(word, context_sentence)
     if provider == "openai":
@@ -555,6 +605,8 @@ def translate_word_in_context(
 def result_identity(model_label: str) -> tuple[str, str]:
     if model_label.startswith("ollama:"):
         return "ollama", model_label[len("ollama:"):]
+    if model_label.startswith("deepseek:"):
+        return "deepseek", model_label[len("deepseek:"):]
     return "openai", model_label
 
 
@@ -564,6 +616,8 @@ def cache_candidates(
     provider_override: str | None = None,
 ) -> list[tuple[str, str]]:
     provider = normalize_provider(provider_override)
+    if provider == "deepseek":
+        return [("deepseek", deepseek_model(word=word))]
     local_model = ollama_model(
         "OLLAMA_WORD_MODEL" if word else "OLLAMA_TRANSLATION_MODEL"
     )

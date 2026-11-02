@@ -61,9 +61,37 @@ and optional OpenAI fallback.
 
 ### Local and cloud LLMs
 
-The main page also has a per-browser **LLM selector** (Auto / Local Qwen / OpenAI), so normal switching does not require editing `.env`. The environment value remains the server default.
+DeepSeek is supported for sentence translation, contextual vocabulary,
+sentence analysis, progressive practice, learning summaries, and semantic
+subtitle segmentation. Configure the server-side `.env`:
 
-Three provider modes are supported:
+```env
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_TIMEOUT_SECONDS=45
+DEEPSEEK_SEGMENTATION_TIMEOUT_SECONDS=90
+```
+
+Restart the app and select **LLM: DeepSeek** in the practice page or learning
+center. With no saved browser choice, the selector follows `LLM_PROVIDER`.
+An existing browser choice takes priority; change it explicitly when switching.
+The key stays on the server. The optional `DEEPSEEK_WORD_MODEL` overrides the
+general model for word lookups; an empty value uses `DEEPSEEK_MODEL`.
+DeepSeek uses Chat Completions with thinking disabled and no OpenAI-specific
+service tier. Translation caches are isolated by provider, model, and prompt.
+Existing saved subtitle revisions are still reused; use **强制重新生成** to
+regenerate with the newly selected provider.
+
+The official [DeepSeek API documentation](https://api-docs.deepseek.com/zh-cn/)
+currently lists `deepseek-flash` and `deepseek-v4-pro`; the model is configurable.
+Selecting DeepSeek uses only its API. Auto mode keeps the existing
+Ollama → OpenAI fallback behavior.
+
+The main page also has a per-browser **LLM selector** (Auto / Local Qwen / OpenAI / DeepSeek), so normal switching does not require editing `.env`. The environment value remains the server default.
+
+Four provider modes are supported:
 
 ```env
 LLM_PROVIDER=auto
@@ -72,6 +100,7 @@ LLM_PROVIDER=auto
 - `auto`: try local Ollama first, then OpenAI fallback.
 - `ollama`: local-only; OpenAI is never called.
 - `openai`: cloud-only.
+- `deepseek`: DeepSeek API only.
 
 Recommended local model:
 

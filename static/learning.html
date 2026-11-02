@@ -45,6 +45,7 @@ select{padding:9px 11px;border:1px solid var(--line);border-radius:9px;backgroun
         <option value="auto">LLM: Auto</option>
         <option value="ollama">LLM: Local Qwen</option>
         <option value="openai">LLM: OpenAI</option>
+        <option value="deepseek">LLM: DeepSeek</option>
       </select>
       <button id="addLearner">+ 学习者</button>
       <button id="exportData">导出数据</button>
@@ -176,16 +177,22 @@ function renderChips(id,items){
 }
 
 function renderSystemStatus(h){
+  if (!localStorage.getItem("mediaDictationLlmProvider") &&
+      ["auto","ollama","openai","deepseek"].includes(h.llm_provider)) {
+    document.getElementById("llmProviderSelect").value = h.llm_provider;
+  }
   const ollama = h.ollama_available
     ? '<span style="color:#15803d;font-weight:700">可用</span>'
     : '<span style="color:#b45309;font-weight:700">不可用</span>';
   const openai = h.openai_enabled
     ? '<span style="color:#15803d;font-weight:700">已配置</span>'
     : '<span style="color:#667085">未配置</span>';
+  const deepseek = h.deepseek_enabled ? "已配置" : "未配置";
   document.getElementById("systemStatus").innerHTML =
     "默认 Provider：<b>"+String(h.llm_provider||"–")+"</b><br>"+
     "Ollama："+ollama+" · "+String(h.ollama_translation_model||"–")+"<br>"+
     "OpenAI："+openai+" · "+String(h.openai_translation_model||"–")+"<br>"+
+    "DeepSeek："+deepseek+" · "+String(h.deepseek_model||"–")+"<br>"+
     "DB Schema：<b>v"+String(h.schema_version||"–")+"</b> · Segmentation：<b>"+String(h.segmentation_version||"–")+"</b><br>"+
     "家庭 PIN：<b>"+(h.pin_enabled?"已启用":"未启用")+"</b> · Whisper：<b>"+(h.whisper_available?"已安装":"未安装")+"</b>";
 }
@@ -428,7 +435,7 @@ document.getElementById("llmProviderSelect").addEventListener("change",function(
 (async function(){
   try{
     const provider=localStorage.getItem("mediaDictationLlmProvider")||"auto";
-    if(["auto","ollama","openai"].includes(provider))document.getElementById("llmProviderSelect").value=provider;
+    if(["auto","ollama","openai","deepseek"].includes(provider))document.getElementById("llmProviderSelect").value=provider;
     await loadLearners();await loadDashboard()}
   catch(e){document.getElementById("sessions").innerHTML='<div class="error">'+String(e.message||e)+"</div>"}
 })();
