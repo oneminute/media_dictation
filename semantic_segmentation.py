@@ -90,6 +90,11 @@ def _request_ends(units, context, final, provider_override):
             **llm.reasoning_kwargs(model))
         return _parse_ends(response.output_text or "", len(units), final), model
 
+    if provider == "deepseek":
+        text, model, _ = llm.deepseek_chat(
+            system_prompt=SYSTEM_PROMPT, user_prompt=prompt, max_tokens=2000,
+            timeout_override=llm.openai_timeout_seconds("DEEPSEEK_SEGMENTATION_TIMEOUT_SECONDS", 90))
+        return _parse_ends(text, len(units), final), model
     if provider == "ollama":
         return local()
     if provider == "openai":

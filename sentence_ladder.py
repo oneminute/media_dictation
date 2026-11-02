@@ -3,7 +3,7 @@ import json
 import re
 from llm_service import (normalize_provider, ollama_model, ollama_chat,
     ollama_timeout_seconds, openai_service_tier, openai_timeout_seconds,
-    reasoning_kwargs)
+    reasoning_kwargs, deepseek_chat)
 from openai import OpenAI
 import os
 
@@ -40,7 +40,9 @@ def build_ladder(text, provider_override=None):
             service_tier=openai_service_tier("OPENAI_TRANSLATION_SERVICE_TIER", "flex"),
             **reasoning_kwargs(model))
         return response.output_text, model
-    if provider == "ollama":
+    if provider == "deepseek":
+        raw, model, _ = deepseek_chat(system_prompt=INSTRUCTIONS, user_prompt=text, max_tokens=1300)
+    elif provider == "ollama":
         raw, model = local()
     elif provider == "openai":
         raw, model = cloud()
